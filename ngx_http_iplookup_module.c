@@ -16,9 +16,9 @@ static char *ngx_http_iplookup_merge_loc_conf(ngx_conf_t *cf, void *parent, void
 
 static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r);
 
-//static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
+static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
 
-//static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int id);
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int id);
 
 
 
@@ -55,10 +55,10 @@ ngx_module_t ngx_http_iplookup_module = {
     NULL,
     NULL,
     NULL,
-    NULL, 
-    NULL, 
-    NULL, 
-    NULL, 
+    NULL,
+    NULL,
+    NULL,
+    NULL,
     NGX_MODULE_V1_PADDING
 };
 
@@ -97,8 +97,8 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r)
     r->headers_out.content_type.len = sizeof("text/plain") - 1;
     r->headers_out.content_type.data = (u_char *) "text/plain";
 
-    //search_db(r, conf, 16785407);
-    ngx_str_t content = conf->database;
+    ngx_str_t content = search_db(r, conf, 16785407);
+    //ngx_str_t content = conf->database;
 
     if (content.data == NULL) {
         content.len = sizeof("fail") - 1;
@@ -144,7 +144,6 @@ static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf) {
 }
 
 
-/*
 static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {
     int ai, bi;
 
@@ -160,10 +159,6 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     DBT key, data;
     char s[1024];
 
-    db_create(&dbp, NULL, 0);
-    dbp->set_bt_compare(dbp, compare_bt);
-    dbp->open(dbp, NULL, (const char *) conf->database.data, NULL, DB_RDONLY, DB_CREATE, 0);
-
     memset(&key, 0, sizeof(DBT));
     memset(&data, 0, sizeof(DBT));
 
@@ -174,17 +169,18 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     data.ulen = 1024;
     data.flags = DB_DBT_USERMEM;
     
+    db_create(&dbp, NULL, 0);
+    dbp->set_bt_compare(dbp, compare_bt);
+    dbp->open(dbp, NULL, (const char *) conf->database.data, NULL, DB_BTREE, DB_RDONLY, 0);
     dbp->cursor(dbp, NULL, &dbcp, 0);
     dbcp->get(dbcp, &key, &data, DB_SET_RANGE);
+    dbcp->close(dbcp);
+    dbp->close(dbp, 0);
 
     ngx_str_t res;
 
     res.data = (u_char *) s;
     res.len = strlen(s);
 
-    dbcp->close(dbcp);
-    dbp->close(dbp, 0);
-
     return res;
 }
-*/

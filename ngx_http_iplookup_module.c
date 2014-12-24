@@ -97,8 +97,12 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r)
     r->headers_out.content_type.len = sizeof("text/plain") - 1;
     r->headers_out.content_type.data = (u_char *) "text/plain";
 
+    if (r->args.data != NULL) {
+
+    } else {
+        ngx_str_t ipaddr = r->connection->addr_text;
+    }
     ngx_str_t content = search_db(r, conf, 16785407);
-    //ngx_str_t content = conf->database;
 
     if (content.data == NULL) {
         content.len = sizeof("fail") - 1;

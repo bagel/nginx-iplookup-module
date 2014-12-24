@@ -1,4 +1,4 @@
-ngx_http_iplookup_module
+nginx-iplookup-module
 ========================
 
 nginx iplookup module

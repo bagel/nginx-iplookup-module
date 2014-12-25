@@ -9,6 +9,12 @@ typedef struct {
 } ngx_http_iplookup_loc_conf_t;
 
 
+typedef struct {
+    ngx_str_t ip;
+    ngx_str_t format;
+} ngx_http_iplookup_args_t;
+
+
 static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf);
 
 static void *ngx_http_iplookup_create_loc_conf(ngx_conf_t *cf);
@@ -22,6 +28,8 @@ static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
 static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, ngx_int_t n);
 
 static ngx_int_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
+
+static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r);
 
 
 
@@ -100,10 +108,12 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r)
     r->headers_out.content_type.len = sizeof("text/plain") - 1;
     r->headers_out.content_type.data = (u_char *) "text/plain";
 
-    //if (r->args.data != NULL) {
-    //}
-    ngx_str_t ipaddr = r->connection->addr_text;
-    ngx_int_t n = ipaddr_number(r, ipaddr);
+    ngx_http_iplookup_args_t *args = parse_args(r);
+
+    if (args->ip.data == NULL) {
+        args->ip = r->connection->addr_text;
+    }
+    ngx_int_t n = ipaddr_number(r, args->ip);
 
     ngx_str_t content = search_db(r, conf, n);
 
@@ -190,6 +200,55 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     res.len = strlen(s);
 
     return res;
+}
+
+
+static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
+    ngx_int_t max_args = 10;
+    ngx_str_t args_next, args_temp;
+
+    ngx_http_iplookup_args_t *args;
+    args = ngx_pcalloc(r->pool, sizeof(ngx_http_iplookup_args_t));
+
+    ngx_str_null(&args->ip);
+    ngx_str_null(&args->format);
+
+    args_next = r->args;
+    int i = 0;
+    while (i < max_args) {
+        args_temp.data = ngx_strlchr(args_next.data, args_next.data + args_next.len, '&');
+        if (args_temp.data == NULL) {
+            break;
+        }
+        args_temp.len = args_next.len - (args_temp.data - args_next.data);
+
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args_temp: %s ", args_temp.data);
+        
+        if (ngx_strncmp(args_next.data, (const char *) "ip=", 3) == 0) {
+            args->ip.len = (args_temp.data - args_next.data) - 3;
+            args->ip.data = args_next.data + 3;
+        }
+        if (ngx_strncmp(args_next.data, (const char *) "format=", 7) == 0) {
+            args->format.len = (args_temp.data - args_next.data) - 7;
+            args->format.data = args_next.data + 7;
+        }
+
+        args_next.data = args_temp.data + 1;
+        args_next.len = args_temp.len - 1;
+
+        i++;
+    }
+
+    if (ngx_strncmp(args_next.data, (const char *) "ip=", 3) == 0) {
+        args->ip.len = args_next.len - 3;
+        args->ip.data = args_next.data + 3;
+    }
+    if (ngx_strncmp(args_next.data, (const char *) "format=", 7) == 0) {
+        args->format.len = args_next.len - 7;
+        args->format.data = args_next.data + 7;
+    }
+
+    return args;
 }
 
 

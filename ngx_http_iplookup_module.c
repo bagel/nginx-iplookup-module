@@ -27,7 +27,7 @@ static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
 
 static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, ngx_int_t n);
 
-static ngx_int_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
+static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
 
 static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r);
 
@@ -93,12 +93,11 @@ static char *ngx_http_iplookup_merge_loc_conf(ngx_conf_t *cf, void *parent, void
 }
 
 
-static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r)
-{
+static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     ngx_int_t rc;
     ngx_buf_t *b;
     ngx_chain_t out;
-    unsigned char *start;
+    u_char *start;
 
     ngx_http_iplookup_loc_conf_t *conf;
     conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
@@ -170,11 +169,13 @@ static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {
 }
 
 
-static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, ngx_int_t n) {
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, u_int n) {
     DB *dbp;
     DBC *dbcp;
     DBT key, data;
     char s[1024];
+    int rt;
+    ngx_str_t res;
 
     ngx_memzero(&key, sizeof(DBT));
     ngx_memzero(&data, sizeof(DBT));
@@ -190,14 +191,17 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     dbp->set_bt_compare(dbp, compare_bt);
     dbp->open(dbp, NULL, (const char *) conf->database.data, NULL, DB_BTREE, DB_RDONLY, 0);
     dbp->cursor(dbp, NULL, &dbcp, 0);
-    dbcp->get(dbcp, &key, &data, DB_SET_RANGE);
+    rt = dbcp->get(dbcp, &key, &data, DB_SET_RANGE);
+    if (rt == 0) {
+        res.data = (u_char *) s;
+        res.len = strlen(s);
+    } else {
+        res.data = (u_char *) "search fail";
+        res.len = strlen("search fail");
+    }
+
     dbcp->close(dbcp);
     dbp->close(dbp, 0);
-
-    ngx_str_t res;
-
-    res.data = (u_char *) s;
-    res.len = strlen(s);
 
     return res;
 }
@@ -252,8 +256,8 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
 }
 
 
-static ngx_int_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
-    ngx_int_t n = 0;
+static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
+    u_int n = 0;
     ngx_str_t addr_num, addr_next, addr_temp;
     int i;
 

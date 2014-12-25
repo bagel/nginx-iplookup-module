@@ -15,6 +15,19 @@ typedef struct {
 } ngx_http_iplookup_args_t;
 
 
+typedef struct {
+    ngx_int_t ret;
+    ngx_int_t start;
+    ngx_int_t end;
+    ngx_str_t country;
+    ngx_str_t province;
+    ngx_str_t city;
+    ngx_str_t district;
+    ngx_str_t type;
+    ngx_str_t desc;
+} ngx_http_iplookup_ipinfo_t;
+
+
 static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf);
 
 static void *ngx_http_iplookup_create_loc_conf(ngx_conf_t *cf);
@@ -25,11 +38,13 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r);
 
 static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
 
-static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, ngx_int_t n);
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, u_int n);
 
 static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
 
 static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r);
+
+static ngx_str_t format_ipinfo(ngx_http_request_t *r, ngx_str_t ipinfo);
 
 
 
@@ -98,21 +113,25 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     ngx_buf_t *b;
     ngx_chain_t out;
     u_char *start;
+    ngx_str_t ipaddr;
 
     ngx_http_iplookup_loc_conf_t *conf;
     conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
 
     //rc = ngx_http_discard_body(r);
 
-    r->headers_out.content_type.len = sizeof("text/plain") - 1;
-    r->headers_out.content_type.data = (u_char *) "text/plain";
+    r->headers_out.content_type.len = sizeof("text/html; charset=gbk") - 1;
+    r->headers_out.content_type.data = (u_char *) "text/html; charset=gbk";
 
     ngx_http_iplookup_args_t *args = parse_args(r);
+    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args_ip: %s ", args->ip.data);
 
     if (args->ip.data == NULL) {
-        args->ip = r->connection->addr_text;
+        ipaddr = r->connection->addr_text;
+    } else {
+        ipaddr = args->ip;
     }
-    ngx_int_t n = ipaddr_number(r, args->ip);
+    ngx_int_t n = ipaddr_number(r, ipaddr);
 
     ngx_str_t content = search_db(r, conf, n);
 
@@ -217,6 +236,11 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
     ngx_str_null(&args->ip);
     ngx_str_null(&args->format);
 
+    if (r->args.data == NULL) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args is null");
+        return args;
+    }
+
     args_next = r->args;
     int i = 0;
     while (i < max_args) {
@@ -276,7 +300,7 @@ static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
     }
     n += ngx_atoi(addr_next.data, addr_next.len);
 
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num: %d ", n);
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num: %ud ", n);
 
     return n;
 }

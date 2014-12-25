@@ -2,6 +2,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <db.h>
+#include <math.h>
 
 typedef struct {
     ngx_str_t database;
@@ -18,7 +19,9 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r);
 
 static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
 
-static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int id);
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, ngx_int_t n);
+
+static ngx_int_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
 
 
 
@@ -97,12 +100,12 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r)
     r->headers_out.content_type.len = sizeof("text/plain") - 1;
     r->headers_out.content_type.data = (u_char *) "text/plain";
 
-    if (r->args.data != NULL) {
+    //if (r->args.data != NULL) {
+    //}
+    ngx_str_t ipaddr = r->connection->addr_text;
+    ngx_int_t n = ipaddr_number(r, ipaddr);
 
-    } else {
-        ngx_str_t ipaddr = r->connection->addr_text;
-    }
-    ngx_str_t content = search_db(r, conf, 16785407);
+    ngx_str_t content = search_db(r, conf, n);
 
     if (content.data == NULL) {
         content.len = sizeof("fail") - 1;
@@ -151,22 +154,22 @@ static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf) {
 static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {
     int ai, bi;
 
-    memcpy(&ai, a->data, sizeof(int));
-    memcpy(&bi, b->data, sizeof(int));
+    ngx_memcpy(&ai, a->data, sizeof(int));
+    ngx_memcpy(&bi, b->data, sizeof(int));
     return (ai - bi);
 }
 
 
-static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int id) {
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, ngx_int_t n) {
     DB *dbp;
     DBC *dbcp;
     DBT key, data;
     char s[1024];
 
-    memset(&key, 0, sizeof(DBT));
-    memset(&data, 0, sizeof(DBT));
+    ngx_memzero(&key, sizeof(DBT));
+    ngx_memzero(&data, sizeof(DBT));
 
-    key.data = &id;
+    key.data = &n;
     key.size = sizeof(int);
 
     data.data = s;
@@ -187,4 +190,30 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     res.len = strlen(s);
 
     return res;
+}
+
+
+static ngx_int_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
+    ngx_int_t n = 0;
+    ngx_str_t addr_num, addr_next, addr_temp;
+    int i;
+
+    addr_next = ipaddr;
+    for (i=3; i>0; i--) {
+        addr_temp.data = ngx_strlchr(addr_next.data, addr_next.data + addr_next.len, '.');
+        addr_temp.len = addr_next.len - (addr_temp.data - addr_next.data);
+
+        addr_num.data = addr_next.data;
+        addr_num.len = addr_temp.data - addr_next.data;
+
+        n += ngx_atoi(addr_num.data, addr_num.len) * pow(2, 8 * i);
+
+        addr_next.data = addr_temp.data + 1;
+        addr_next.len = addr_temp.len - 1;
+    }
+    n += ngx_atoi(addr_next.data, addr_next.len);
+
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num: %d ", n);
+
+    return n;
 }

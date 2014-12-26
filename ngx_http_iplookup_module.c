@@ -3,6 +3,7 @@
 #include <ngx_http.h>
 #include <db.h>
 #include <math.h>
+#include "code_map.h"
 
 typedef struct {
     ngx_str_t database;
@@ -44,7 +45,7 @@ static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
 
 static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r);
 
-static ngx_str_t format_ipinfo(ngx_http_request_t *r, ngx_str_t ipinfo);
+static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_t ipinfo);
 
 
 
@@ -120,11 +121,17 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
 
     //rc = ngx_http_discard_body(r);
 
-    r->headers_out.content_type.len = sizeof("text/html; charset=gbk") - 1;
-    r->headers_out.content_type.data = (u_char *) "text/html; charset=gbk";
-
     ngx_http_iplookup_args_t *args = parse_args(r);
     //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args_ip: %s ", args->ip.data);
+    
+    if (args->format.data != NULL && ngx_strncmp(args->format.data, (const char *) "js", 2) == 0) {
+        r->headers_out.content_type.len = sizeof("text/html; charset=utf-8") - 1;
+        r->headers_out.content_type.data = (u_char *) "text/html; charset=utf-8";
+    } else {
+        r->headers_out.content_type.len = sizeof("text/html; charset=gbk") - 1;
+        r->headers_out.content_type.data = (u_char *) "text/html; charset=gbk";
+    }
+
 
     if (args->ip.data == NULL) {
         ipaddr = r->connection->addr_text;
@@ -134,6 +141,8 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     ngx_int_t n = ipaddr_number(r, ipaddr);
 
     ngx_str_t content = search_db(r, conf, n);
+
+    format_ipinfo(r, content);
 
     if (content.data == NULL) {
         content.len = sizeof("fail") - 1;
@@ -192,9 +201,9 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     DB *dbp;
     DBC *dbcp;
     DBT key, data;
-    char s[1024];
-    int rt;
-    ngx_str_t res;
+    u_char b[128], s[128];
+    int rn, rt;
+    ngx_str_t rs;
 
     ngx_memzero(&key, sizeof(DBT));
     ngx_memzero(&data, sizeof(DBT));
@@ -203,26 +212,28 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     key.size = sizeof(int);
 
     data.data = s;
-    data.ulen = 1024;
+    data.ulen = 128;
     data.flags = DB_DBT_USERMEM;
     
     db_create(&dbp, NULL, 0);
     dbp->set_bt_compare(dbp, compare_bt);
     dbp->open(dbp, NULL, (const char *) conf->database.data, NULL, DB_BTREE, DB_RDONLY, 0);
     dbp->cursor(dbp, NULL, &dbcp, 0);
-    rt = dbcp->get(dbcp, &key, &data, DB_SET_RANGE);
-    if (rt == 0) {
-        res.data = (u_char *) s;
-        res.len = strlen(s);
+    rn = dbcp->get(dbcp, &key, &data, DB_SET_RANGE);
+    if (rn == 0) {
+        rt = 1;
     } else {
-        res.data = (u_char *) "search fail";
-        res.len = strlen("search fail");
+        rt = -2;
     }
+
+    ngx_snprintf(b, sizeof(b) - 1, "%d\t%s%Z", rt, s);
+    rs.data = b;
+    rs.len = ngx_strlen(b);
 
     dbcp->close(dbcp);
     dbp->close(dbp, 0);
 
-    return res;
+    return rs;
 }
 
 
@@ -303,4 +314,13 @@ static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
     ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num: %ud ", n);
 
     return n;
+}
+
+
+static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_t ipinfo_s) {
+    ngx_http_iplookup_ipinfo_t *ipinfo;
+    ipinfo = ngx_pcalloc(r->pool, sizeof(ngx_http_iplookup_ipinfo_t));
+
+    ipinfo->ret = 1;
+    return ipinfo;
 }

@@ -132,6 +132,7 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     ngx_chain_t out;
     u_char *start;
     ngx_str_t ipaddr;
+    u_char *content_type;
 
     ngx_http_iplookup_loc_conf_t *conf;
     conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
@@ -140,13 +141,16 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
 
     ngx_http_iplookup_args_t *args = parse_args(r);
     
-    if (args->format.data != NULL && ngx_strncmp(args->format.data, (const char *) "js", 2) == 0) {
-        r->headers_out.content_type.len = sizeof("text/html; charset=utf-8") - 1;
-        r->headers_out.content_type.data = (u_char *) "text/html; charset=utf-8";
+    if (args->format.data != NULL && ngx_strncmp(args->format.data, (const char *) "json", 4) == 0) {
+        content_type = (u_char *) "application/json; charset=utf-8";
+    } else if (args->format.data != NULL && ngx_strncmp(args->format.data, (const char *) "js", 2) == 0) {
+        content_type = (u_char *) "text/javascript; charset=utf-8";
     } else {
-        r->headers_out.content_type.len = sizeof("text/html; charset=utf-8") - 1;
-        r->headers_out.content_type.data = (u_char *) "text/html; charset=utf-8";
+        content_type = (u_char *) "text/html; charset=utf-8";
     }
+
+    r->headers_out.content_type.len = ngx_strlen(content_type);
+    r->headers_out.content_type.data = content_type;
 
     if (args->ip.data == NULL) {
         ipaddr = r->connection->addr_text;
@@ -431,7 +435,7 @@ static void *ipinfo_decode(ngx_http_request_t *r, u_char *s, ngx_str_t ipinfo_it
         int len_s = ngx_strlen(s);
         int j = 0;
         while (j <= len_b) {
-            s[len_s + j] = b[j];
+            s[len_s + j] = ngx_tolower(b[j]);
             j++;
         }
 

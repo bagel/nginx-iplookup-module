@@ -20,26 +20,8 @@ typedef struct {
     int ret;
     u_int start;
     u_int end;
-    ngx_str_t country;
-    ngx_str_t province;
-    ngx_str_t city;
-    ngx_str_t district;
-    ngx_str_t isp;
-    ngx_str_t type;
+    ngx_array_t *a;
 } ngx_http_iplookup_ipinfo_t;
-
-
-typedef struct {
-    int ret;
-    u_int start;
-    u_int end;
-    uint32_t country;
-    uint32_t province;
-    uint32_t city;
-    uint32_t district;
-    uint32_t isp;
-    uint32_t type;
-} ngx_http_iplookup_ipinfo_u;
 
 
 static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf);
@@ -62,7 +44,9 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
 
 static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_str_t format, ngx_str_t ipaddr);
 
-static void *ipinfo_decode(ngx_http_request_t *r, u_char *s, ngx_str_t ipinfo_item);
+static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipinfo);
+
+static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item);
 
 
 
@@ -317,7 +301,7 @@ static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
     int i;
 
     addr_next = ipaddr;
-    for (i=3; i>0; i--) {
+    for (i = 3; i > 0; i--) {
         addr_temp.data = ngx_strlchr(addr_next.data, addr_next.data + addr_next.len, '.');
         addr_temp.len = addr_next.len - (addr_temp.data - addr_next.data);
 
@@ -346,13 +330,24 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
         return ipinfo;
     }
 
+    ipinfo->a = ngx_array_create(r->pool, 6, sizeof(ngx_str_t));
+    ngx_str_t *t;
+    int k;
+    for (k = 0; k < 6; k++) {
+        t = (ngx_str_t *) ngx_array_push(ipinfo->a);
+        t->data = NULL;
+        t->len = 0;
+    }
+    ngx_str_t *ipinfo_a;
+    ipinfo_a = (ngx_str_t *) ipinfo->a->elts;
+
     ngx_str_t ipinfo_next, ipinfo_temp, ipinfo_item;
-    int i = 0;
+    int i;
     int n;
     u_int m;
     int country, province, city, district, isp, type;
     ipinfo_next = ipinfo_s;
-    while (i < 8) {
+    for (i = 0; i < 8; i++) {
         ipinfo_temp.data = ngx_strlchr(ipinfo_next.data, ipinfo_next.data + ipinfo_next.len, '\t');
         ipinfo_temp.len = ipinfo_next.len - (ipinfo_temp.data - ipinfo_next.data);
 
@@ -373,99 +368,147 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
             n = ngx_atoi(ipinfo_item.data, ipinfo_item.len);
         }
 
-        if (i == 0) {
-            ipinfo->ret = n;
-        } else if (i == 1) {
-            ipinfo->start = m;
-        } else if (i == 2) {
-            ipinfo->end = m;
-        } else if (i == 3) {
-            country = n - 1;
-            ipinfo->country.data = (u_char *) text_countries[country];
-            ipinfo->country.len = ngx_strlen(text_countries[country]);
-        } else if (i == 4) {
-            province = n - 1;
-            ipinfo->province.data = (u_char *) text_provinces[country][province];
-            ipinfo->province.len = ngx_strlen(text_provinces[country][province]);
-        } else if (i == 5) {
-            city = n - 1;
-            ipinfo->city.data = (u_char *) text_cities[city];
-            ipinfo->city.len = ngx_strlen(text_cities[city]);
-        } else if (i == 6) {
-            district = n - 1;
-            ipinfo->district.data = (u_char *) text_districts[country][province][city][district];
-            ipinfo->district.len = ngx_strlen(text_districts[country][province][city][district]);
-        } else if (i == 7) {
-            isp = n - 1;
-            ipinfo->isp.data = (u_char *) text_isp[isp];
-            ipinfo->isp.len = ngx_strlen(text_isp[isp]);
+        switch (i) {
+            case 0:
+                ipinfo->ret = n;
+                break;
+            case 1:
+                ipinfo->start = m;
+                break;
+            case 2:
+                ipinfo->end = m;
+                break;
+            case 3:
+                country = n - 1;
+                ipinfo_a->data = (u_char *) text_countries[country];
+                ipinfo_a->len = ngx_strlen(text_countries[country]);
+                break;
+            case 4:
+                province = n - 1;
+                (ipinfo_a + 1)->data = (u_char *) text_provinces[country][province];
+                (ipinfo_a + 1)->len = ngx_strlen(text_provinces[country][province]);
+                break;
+            case 5:
+                city = n - 1;
+                (ipinfo_a + 2)->data = (u_char *) text_cities[city];
+                (ipinfo_a + 2)->len = ngx_strlen(text_cities[city]);
+                break;
+            case 6:
+                district = n - 1;
+                (ipinfo_a + 3)->data = (u_char *) text_districts[country][province][city][district];
+                (ipinfo_a + 3)->len = ngx_strlen(text_districts[country][province][city][district]);
+                break;
+            case 7:
+                isp = n - 1;
+                (ipinfo_a + 4)->data = (u_char *) text_isp[isp];
+                (ipinfo_a + 4)->len = ngx_strlen(text_isp[isp]);
+                break;
         }
 
-        i++;
     }
     if (ipinfo_next.len > 0) {
         type = ngx_atoi(ipinfo_next.data, ipinfo_next.len) - 1;
-        ipinfo->type.data = (u_char *) text_type[type];
-        ipinfo->type.len = ngx_strlen(text_type[type]);
+        (ipinfo_a + 5)->data = (u_char *) text_type[type];
+        (ipinfo_a + 5)->len = ngx_strlen(text_type[type]);
     }
 
     return ipinfo;
 }
 
 
-static void *ipinfo_decode(ngx_http_request_t *r, u_char *s, ngx_str_t ipinfo_item) {
+static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item) {
     u_char b[128];
     int n;
     uint32_t t;
-    
-    n = ngx_utf8_length(ipinfo_item.data, ipinfo_item.len);
-    s[0] = '\0';
 
+    s[0] = '\0';
+    n = ngx_utf8_length(ipinfo_item->data, ipinfo_item->len);
     if (n <= 0) {
         return s;
     }
 
-    int i = 0;
-    while (i < n) {
-        t = ngx_utf8_decode(&ipinfo_item.data, ipinfo_item.len);
+    int i;
+    for (i = 0; i < n; i++) {
+        t = ngx_utf8_decode(&ipinfo_item->data, ipinfo_item->len);
         ngx_memzero(&b, sizeof(b));
         ngx_snprintf(b, sizeof(b) - 1, "\\u%uXD%Z", t);
         ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item unicode: %s ", b);
         int len_b = ngx_strlen(b);
         int len_s = ngx_strlen(s);
-        int j = 0;
-        while (j <= len_b) {
+        int j;
+        for (j = 0; j <= len_b; j++) {
             s[len_s + j] = ngx_tolower(b[j]);
-            j++;
         }
-
-        i++;
     }
 
     return s;
 }
 
 
+static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipinfo) {
+    ngx_str_t *ipinfo_a = ipinfo->elts;
+    int m = ipinfo->nelts;
+    ngx_array_t *ipinfo_a_u = ngx_array_create(r->pool, m, sizeof(ngx_str_t));
+    ngx_str_t *t;
+    int i;
+    for (i = 0; i < m; i++) {
+        t = (ngx_str_t *) ngx_array_push(ipinfo_a_u);
+        t->len = 0;
+        t->data = NULL;
+    }
+
+    ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
+
+    u_char country[128], province[128], city[128], district[128], isp[128], type[128];
+
+    ipinfo_decode_item(r, country, ipinfo_a);
+    ipinfo_u->len = ngx_strlen(country);
+    ipinfo_u->data = country;
+
+    ipinfo_decode_item(r, province, ipinfo_a + 1);
+    (ipinfo_u + 1)->len = ngx_strlen(province);
+    (ipinfo_u + 1)->data = province;
+
+    ipinfo_decode_item(r, city, ipinfo_a + 2);
+    (ipinfo_u + 2)->len = ngx_strlen(city);
+    (ipinfo_u + 2)->data = city;
+
+    ipinfo_decode_item(r, district, ipinfo_a + 3);
+    (ipinfo_u + 3)->len = ngx_strlen(district);
+    (ipinfo_u + 3)->data = district;
+
+    ipinfo_decode_item(r, isp, ipinfo_a + 4);
+    (ipinfo_u + 4)->len = ngx_strlen(isp);
+    (ipinfo_u + 4)->data = isp;
+
+    ipinfo_decode_item(r, type, ipinfo_a + 5);
+    (ipinfo_u + 5)->len = ngx_strlen(type);
+    (ipinfo_u + 5)->data = type;
+
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item array: %V ", ipinfo_u);
+
+    return ipinfo_a_u;
+}
+
+
 static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_str_t format, ngx_str_t ipaddr) {
     ngx_str_t content;
     u_char b[1024];
+    ngx_str_t *ipinfo_a = ipinfo->a->elts;
 
-    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "country: %uXD %uXD, len: %d ", c, d, ipinfo->country.len);
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "country: %V, province: %V, type: %V ", ipinfo_a, ipinfo_a + 1, ipinfo_a + 5);
 
     if (ipinfo->ret == 1) {
         if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2) == 0) {
-            u_char country[128], province[128], city[128], district[128], isp[128], type[128];
-            ipinfo_decode(r, country, ipinfo->country);
-            ipinfo_decode(r, province, ipinfo->province);
-            ipinfo_decode(r, city, ipinfo->city);
-            ipinfo_decode(r, district, ipinfo->district);
-            ipinfo_decode(r, isp, ipinfo->isp);
-            ipinfo_decode(r, type, ipinfo->type);
-            ngx_snprintf(b, sizeof(b) - 1, "var remote_ip_info = {\"ret\":1,\"start\":-1,\"end\":-1,\"country\":\"%s\",\"province\":\"%s\",\"city\":\"%s\",\"district\":\"%s\",\"isp\":\"%s\",\"type\":\"%s\",\"desc\":\"\"}%Z", &country, &province, &city, &district, &isp, &type);
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "decode before ");
+            ngx_array_t *ipinfo_a_u = ipinfo_decode_array(r, ipinfo->a);
+            ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "decode after, country: ");
+            ngx_snprintf(b, sizeof(b) - 1, "var remote_ip_info = {\"ret\":1,\"start\":-1,\"end\":-1,\"country\":\"%V\",\"province\":\"%V\",\"city\":\"%V\",\"district\":\"%V\",\"isp\":\"%V\",\"type\":\"%V\",\"desc\":\"\"}%Z", ipinfo_u, ipinfo_u + 1, ipinfo_u + 2, ipinfo_u + 3, ipinfo_u + 4, ipinfo_u + 5);
 
             ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "country: %s ", b);
         } else {
-            ngx_snprintf(b, sizeof(b) - 1, "1\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%Z", &ipinfo->country, &ipinfo->province, &ipinfo->city, &ipinfo->district, &ipinfo->isp, &ipinfo->type);
+            ngx_snprintf(b, sizeof(b) - 1, "1\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%Z", ipinfo_a, ipinfo_a + 1, ipinfo_a + 2, ipinfo_a + 3, ipinfo_a + 4, ipinfo_a + 5);
         }
     } else {
         ngx_snprintf(b, sizeof(b) - 1, "%d", ipinfo->ret);

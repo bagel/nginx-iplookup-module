@@ -358,7 +358,6 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
         ipinfo_next.len = ipinfo_temp.len - 1;
 
         if (ipinfo_item.len == 0) {
-            i++;
             continue;
         }
 
@@ -411,6 +410,7 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
         (ipinfo_a + 5)->data = (u_char *) text_type[type];
         (ipinfo_a + 5)->len = ngx_strlen(text_type[type]);
     }
+
 
     return ipinfo;
 }

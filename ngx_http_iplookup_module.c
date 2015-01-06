@@ -3,6 +3,7 @@
 #include <ngx_http.h>
 #include <db.h>
 #include <math.h>
+#include <iconv.h>
 #include "code_map.h"
 
 typedef struct {
@@ -48,6 +49,9 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
 
 static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item);
 
+static void *ipinfo_iconv_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item);
+
+static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinfo);
 
 
 static ngx_command_t ngx_http_iplookup_commands[] = {
@@ -130,7 +134,7 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     } else if (args->format.data != NULL && ngx_strncmp(args->format.data, (const char *) "js", 2) == 0) {
         content_type = (u_char *) "text/javascript; charset=utf-8";
     } else {
-        content_type = (u_char *) "text/html; charset=utf-8";
+        content_type = (u_char *) "text/html; charset=gbk";
     }
 
     r->headers_out.content_type.len = ngx_strlen(content_type);
@@ -445,15 +449,10 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipi
 }
 
 
-/*
-static void *ipinfo_iconv_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item) {
-    iconv_t 
-}*/
-
-
 static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipinfo) {
     ngx_str_t *ipinfo_a = ipinfo->elts;
     int m = ipinfo->nelts;
+
     ngx_array_t *ipinfo_a_u = ngx_array_create(r->pool, m, sizeof(ngx_str_t));
     ngx_str_t *item;
     u_char s[128];
@@ -467,10 +466,52 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
         ngx_memcpy(item->data, s, sizeof(s));
     }
 
-    ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item test array: %V ", ipinfo_u);
+    //ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
+    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item test array: %V ", ipinfo_u);
 
     return ipinfo_a_u;
+}
+
+
+static void *ipinfo_iconv_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item) {
+    iconv_t icp;
+    char *in = (char *) ipinfo_item->data;
+    char *ou = (char *) s;
+    size_t inleft = ipinfo_item->len;
+    size_t ouleft = ipinfo_item->len * 3;
+    size_t rt;
+
+    icp = iconv_open("GBK", "UTF-8");
+    rt = iconv(icp, &in, &inleft, &ou, &ouleft);
+    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "iconv %V ret: %d ", ipinfo_item, rt);
+    iconv_close(icp);
+
+    s[ipinfo_item->len * 3 - ouleft] = '\0';
+
+    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "iconv %V len: %d inleft: %d ouleft: %d strlen: %d ", ipinfo_item, ipinfo_item->len * 3, inleft, ouleft, ngx_strlen(s));
+
+    return s;
+}
+
+
+static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinfo) {
+    ngx_str_t *ipinfo_a = ipinfo->elts;
+    int m = ipinfo->nelts;
+
+    ngx_array_t *ipinfo_a_g = ngx_array_create(r->pool, m, sizeof(ngx_str_t));
+    ngx_str_t *item;
+    u_char s[128];
+    int i;
+    for (i = 0; i < m; i++) {
+        item = (ngx_str_t *) ngx_array_push(ipinfo_a_g);
+        ngx_memzero(s, sizeof(s));
+        ipinfo_iconv_item(r, s, ipinfo_a + i);
+        item->len = ngx_strlen(s);
+        item->data = ngx_pcalloc(r->pool, sizeof(s));
+        ngx_memcpy(item->data, s, sizeof(s));
+    }
+ 
+    return ipinfo_a_g;
 }
 
 
@@ -483,7 +524,6 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
 
     if (ipinfo->ret == 1) {
         if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2) == 0) {
-            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "decode before ");
             ngx_array_t *ipinfo_a_u = ipinfo_decode_array(r, ipinfo->a);
             ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
             if (format.data != NULL && ngx_strncmp(format.data, (const char *) "json", 4) == 0) {
@@ -492,7 +532,10 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
                 ngx_snprintf(b, sizeof(b) - 1, "var remote_ip_info = {\"ret\":1,\"start\":-1,\"end\":-1,\"country\":\"%V\",\"province\":\"%V\",\"city\":\"%V\",\"district\":\"%V\",\"isp\":\"%V\",\"type\":\"%V\",\"desc\":\"\"}%Z", ipinfo_u, ipinfo_u + 1, ipinfo_u + 2, ipinfo_u + 3, ipinfo_u + 4, ipinfo_u + 5);
             }
         } else {
-            ngx_snprintf(b, sizeof(b) - 1, "1\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%Z", ipinfo_a, ipinfo_a + 1, ipinfo_a + 2, ipinfo_a + 3, ipinfo_a + 4, ipinfo_a + 5);
+            ngx_array_t *ipinfo_a_g = ipinfo_iconv_array(r, ipinfo->a);
+            ngx_str_t *ipinfo_g = ipinfo_a_g->elts;
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "iconv: %V", ipinfo_g);
+            ngx_snprintf(b, sizeof(b) - 1, "1\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%Z", ipinfo_g, ipinfo_g + 1, ipinfo_g + 2, ipinfo_g + 3, ipinfo_g + 4, ipinfo_g + 5);
         }
     } else {
         ngx_snprintf(b, sizeof(b) - 1, "%d", ipinfo->ret);

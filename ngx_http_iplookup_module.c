@@ -445,47 +445,30 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipi
 }
 
 
+/*
+static void *ipinfo_iconv_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item) {
+    iconv_t 
+}*/
+
+
 static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipinfo) {
     ngx_str_t *ipinfo_a = ipinfo->elts;
     int m = ipinfo->nelts;
     ngx_array_t *ipinfo_a_u = ngx_array_create(r->pool, m, sizeof(ngx_str_t));
-    ngx_str_t *t;
+    ngx_str_t *item;
+    u_char s[128];
     int i;
     for (i = 0; i < m; i++) {
-        t = (ngx_str_t *) ngx_array_push(ipinfo_a_u);
-        t->len = 0;
-        t->data = NULL;
+        item = (ngx_str_t *) ngx_array_push(ipinfo_a_u);
+        ngx_memzero(s, sizeof(s));
+        ipinfo_decode_item(r, s, ipinfo_a + i);
+        item->len = ngx_strlen(s);
+        item->data = ngx_pcalloc(r->pool, sizeof(s));
+        ngx_memcpy(item->data, s, sizeof(s));
     }
 
     ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
-
-    u_char country[128], province[128], city[128], district[128], isp[128], type[128];
-
-    ipinfo_decode_item(r, country, ipinfo_a);
-    ipinfo_u->len = ngx_strlen(country);
-    ipinfo_u->data = country;
-
-    ipinfo_decode_item(r, province, ipinfo_a + 1);
-    (ipinfo_u + 1)->len = ngx_strlen(province);
-    (ipinfo_u + 1)->data = province;
-
-    ipinfo_decode_item(r, city, ipinfo_a + 2);
-    (ipinfo_u + 2)->len = ngx_strlen(city);
-    (ipinfo_u + 2)->data = city;
-
-    ipinfo_decode_item(r, district, ipinfo_a + 3);
-    (ipinfo_u + 3)->len = ngx_strlen(district);
-    (ipinfo_u + 3)->data = district;
-
-    ipinfo_decode_item(r, isp, ipinfo_a + 4);
-    (ipinfo_u + 4)->len = ngx_strlen(isp);
-    (ipinfo_u + 4)->data = isp;
-
-    ipinfo_decode_item(r, type, ipinfo_a + 5);
-    (ipinfo_u + 5)->len = ngx_strlen(type);
-    (ipinfo_u + 5)->data = type;
-
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item array: %V ", ipinfo_u);
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item test array: %V ", ipinfo_u);
 
     return ipinfo_a_u;
 }

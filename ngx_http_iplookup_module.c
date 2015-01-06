@@ -43,7 +43,7 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r);
 
 static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
 
-static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n);
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n, ngx_str_t ipaddr);
 
 static int64_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
 
@@ -156,7 +156,7 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
 
     ngx_int_t n = ipaddr_number(r, ipaddr);
     ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num n: %L ", n);
-    ngx_str_t ipinfo_s = search_db(r, conf, n);
+    ngx_str_t ipinfo_s = search_db(r, conf, n, ipaddr);
     ngx_http_iplookup_ipinfo_t *ipinfo = format_ipinfo(r, ipinfo_s);
     ngx_str_t content = content_result(r, ipinfo, args->format, ipaddr);
 
@@ -213,12 +213,16 @@ static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {
 }
 
 
-static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n) {
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n, ngx_str_t ipaddr) {
     ngx_str_t rs;
     u_char b[128];
 
     if (n < 0) {
-        ngx_snprintf(b, sizeof(b), "%L%Z", n);
+        if (n == ERROR_INTRANET) {
+            ngx_snprintf(b, sizeof(b), "%L\t%V%Z", n, &ipaddr);
+        } else {
+            ngx_snprintf(b, sizeof(b), "%L%Z", n);
+        }
         rs.data = b;
         rs.len = ngx_strlen(b);
         return rs;
@@ -368,7 +372,11 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
     ipinfo = ngx_pcalloc(r->pool, sizeof(ngx_http_iplookup_ipinfo_t));
 
     if (ngx_strncmp(ipinfo_s.data, (const char *) "-", 1) == 0) {
-        ipinfo->ret = -(ngx_atoi(ipinfo_s.data + 1, ipinfo_s.len - 1));
+        ipinfo->ret = -(ngx_atoi(ipinfo_s.data + 1, 1));
+        if (ipinfo->ret == ERROR_INTRANET) {
+            ipinfo->intip.data = ipinfo_s.data + 3;
+            ipinfo->intip.len = ipinfo_s.len - 3;
+        }
         return ipinfo;
     }
 
@@ -465,6 +473,7 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipi
 
     s[0] = '\0';
     n = ngx_utf8_length(ipinfo_item->data, ipinfo_item->len);
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item n: %d %V", n, ipinfo_item);
     if (n <= 0) {
         return s;
     }
@@ -556,21 +565,30 @@ static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinf
 static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_str_t format, ngx_str_t ipaddr) {
     ngx_str_t content;
     u_char b[1024];
-
+    
     if (ipinfo->ret == SUCCESS) {
         if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2) == 0) {
             ngx_array_t *ipinfo_a_u = ipinfo_decode_array(r, ipinfo->a);
             ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
             if (format.data != NULL && ngx_strncmp(format.data, (const char *) "json", 4) == 0) {
-                ngx_snprintf(b, sizeof(b) - 1, "{\"ret\":1,\"start\":-1,\"end\":-1,\"country\":\"%V\",\"province\":\"%V\",\"city\":\"%V\",\"district\":\"%V\",\"isp\":\"%V\",\"type\":\"%V\",\"desc\":\"\"}%Z", ipinfo_u, ipinfo_u + 1, ipinfo_u + 2, ipinfo_u + 3, ipinfo_u + 4, ipinfo_u + 5);
+                ngx_snprintf(b, sizeof(b), "{\"ret\":%d,\"start\":-1,\"end\":-1,\"country\":\"%V\",\"province\":\"%V\",\"city\":\"%V\",\"district\":\"%V\",\"isp\":\"%V\",\"type\":\"%V\",\"desc\":\"\"}%Z", ipinfo->ret, ipinfo_u, ipinfo_u + 1, ipinfo_u + 2, ipinfo_u + 3, ipinfo_u + 4, ipinfo_u + 5);
             } else {
-                ngx_snprintf(b, sizeof(b) - 1, "var remote_ip_info = {\"ret\":1,\"start\":-1,\"end\":-1,\"country\":\"%V\",\"province\":\"%V\",\"city\":\"%V\",\"district\":\"%V\",\"isp\":\"%V\",\"type\":\"%V\",\"desc\":\"\"}%Z", ipinfo_u, ipinfo_u + 1, ipinfo_u + 2, ipinfo_u + 3, ipinfo_u + 4, ipinfo_u + 5);
+                ngx_snprintf(b, sizeof(b), "var remote_ip_info = {\"ret\":%d,\"start\":-1,\"end\":-1,\"country\":\"%V\",\"province\":\"%V\",\"city\":\"%V\",\"district\":\"%V\",\"isp\":\"%V\",\"type\":\"%V\",\"desc\":\"\"}%Z", ipinfo->ret, ipinfo_u, ipinfo_u + 1, ipinfo_u + 2, ipinfo_u + 3, ipinfo_u + 4, ipinfo_u + 5);
             }
         } else {
             ngx_array_t *ipinfo_a_g = ipinfo_iconv_array(r, ipinfo->a);
             ngx_str_t *ipinfo_g = ipinfo_a_g->elts;
-            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "iconv: %V", ipinfo_g);
-            ngx_snprintf(b, sizeof(b) - 1, "1\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%Z", ipinfo_g, ipinfo_g + 1, ipinfo_g + 2, ipinfo_g + 3, ipinfo_g + 4, ipinfo_g + 5);
+            ngx_snprintf(b, sizeof(b), "%d\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%Z", ipinfo->ret, ipinfo_g, ipinfo_g + 1, ipinfo_g + 2, ipinfo_g + 3, ipinfo_g + 4, ipinfo_g + 5);
+        }
+    } else if (ipinfo->ret == ERROR_INTRANET) {
+        if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2) == 0) {
+            if (format.data != NULL && ngx_strncmp(format.data, (const char *) "json", 4) == 0) {
+                ngx_snprintf(b, sizeof(b), "{\"ret\":%d,\"ip\":\"%V\"}%Z", ipinfo->ret, &ipinfo->intip);
+            } else {
+                ngx_snprintf(b, sizeof(b), "var remote_ip_info = {\"ret\":%d,\"ip\":\"%V\"};%Z", ipinfo->ret, &ipinfo->intip);
+            }
+        } else {
+            ngx_snprintf(b, sizeof(b), "%d\t%V%Z", ipinfo->ret, &ipinfo->intip);
         }
     } else {
         ngx_snprintf(b, sizeof(b) - 1, "%d%Z", ipinfo->ret);

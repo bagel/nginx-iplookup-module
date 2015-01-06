@@ -6,6 +6,13 @@
 #include <iconv.h>
 #include "code_map.h"
 
+
+#define SUCCESS 1
+#define ERROR_INTRANET -1
+#define ERROR_NOTSEARCH -2
+#define ERROR_INVALID -3
+
+
 typedef struct {
     ngx_str_t database;
 } ngx_http_iplookup_loc_conf_t;
@@ -19,8 +26,9 @@ typedef struct {
 
 typedef struct {
     int ret;
-    u_int start;
-    u_int end;
+    int64_t start;
+    int64_t end;
+    ngx_str_t intip;
     ngx_array_t *a;
 } ngx_http_iplookup_ipinfo_t;
 
@@ -35,9 +43,9 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r);
 
 static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
 
-static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, u_int n);
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n);
 
-static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
+static int64_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr);
 
 static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r);
 
@@ -147,6 +155,7 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     }
 
     ngx_int_t n = ipaddr_number(r, ipaddr);
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num n: %L ", n);
     ngx_str_t ipinfo_s = search_db(r, conf, n);
     ngx_http_iplookup_ipinfo_t *ipinfo = format_ipinfo(r, ipinfo_s);
     ngx_str_t content = content_result(r, ipinfo, args->format, ipaddr);
@@ -204,13 +213,22 @@ static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {
 }
 
 
-static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, u_int n) {
+static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n) {
+    ngx_str_t rs;
+    u_char b[128];
+
+    if (n < 0) {
+        ngx_snprintf(b, sizeof(b), "%L%Z", n);
+        rs.data = b;
+        rs.len = ngx_strlen(b);
+        return rs;
+    }
+
     DB *dbp;
     DBC *dbcp;
     DBT key, data;
-    u_char b[128], s[128];
-    int rn, rt;
-    ngx_str_t rs;
+    u_char s[128];
+    int rn;
 
     ngx_memzero(&key, sizeof(DBT));
     ngx_memzero(&data, sizeof(DBT));
@@ -228,11 +246,9 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     dbp->cursor(dbp, NULL, &dbcp, 0);
     rn = dbcp->get(dbcp, &key, &data, DB_SET_RANGE);
     if (rn == 0) {
-        rt = 1;
-        ngx_snprintf(b, sizeof(b) - 1, "%d\t%s%Z", rt, s);
+        ngx_snprintf(b, sizeof(b), "%d\t%s%Z", SUCCESS, s);
     } else {
-        rt = -2;
-        ngx_snprintf(b, sizeof(b) - 1, "%d%Z", rt);
+        ngx_snprintf(b, sizeof(b), "%d%Z", ERROR_NOTSEARCH);
     }
 
     rs.data = b;
@@ -299,27 +315,49 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
 }
 
 
-static u_int ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
-    u_int n = 0;
+static int64_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
+    int64_t n = 0;
     ngx_str_t addr_num, addr_next, addr_temp;
     int i;
+    int64_t rt;
 
     addr_next = ipaddr;
     for (i = 3; i > 0; i--) {
         addr_temp.data = ngx_strlchr(addr_next.data, addr_next.data + addr_next.len, '.');
+        if (addr_temp.data == NULL) {
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "n temp %d", n);
+            return ERROR_INVALID;
+        }
         addr_temp.len = addr_next.len - (addr_temp.data - addr_next.data);
 
         addr_num.data = addr_next.data;
         addr_num.len = addr_temp.data - addr_next.data;
 
-        n += ngx_atoi(addr_num.data, addr_num.len) * pow(2, 8 * i);
+        rt = ngx_atoi(addr_num.data, addr_num.len) * pow(2, 8 * i);
+        if (rt == NGX_ERROR) {
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "n atoi %d", n);
+            return ERROR_INVALID;
+        }
+        n += rt;
 
         addr_next.data = addr_temp.data + 1;
         addr_next.len = addr_temp.len - 1;
     }
-    n += ngx_atoi(addr_next.data, addr_next.len);
+    rt = ngx_atoi(addr_next.data, addr_next.len);
+    if (rt == NGX_ERROR) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "n atoi2 %d", n);
+        return ERROR_INVALID;
+    }
+    n += rt;
 
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num: %ud ", n);
+    if (n < -10) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "n %d", n);
+        return ERROR_INVALID;
+    } else if ((n >= 167772160 && n <= 184549375) || (n >= 3232235520 && n <= 3232301055) || (n >= 2886729728 && n <= 2887778303)) {
+        return ERROR_INTRANET;
+    }
+
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num: %L ", n);
 
     return n;
 }
@@ -329,8 +367,8 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
     ngx_http_iplookup_ipinfo_t *ipinfo;
     ipinfo = ngx_pcalloc(r->pool, sizeof(ngx_http_iplookup_ipinfo_t));
 
-    if (ngx_strncmp(ipinfo_s.data, (const char *) "-2", 2) == 0) {
-        ipinfo->ret = -2;
+    if (ngx_strncmp(ipinfo_s.data, (const char *) "-", 1) == 0) {
+        ipinfo->ret = -(ngx_atoi(ipinfo_s.data + 1, ipinfo_s.len - 1));
         return ipinfo;
     }
 
@@ -348,7 +386,7 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
     ngx_str_t ipinfo_next, ipinfo_temp, ipinfo_item;
     int i;
     int n;
-    u_int m;
+    int64_t m;
     int country, province, city, district, isp, type;
     ipinfo_next = ipinfo_s;
     for (i = 0; i < 8; i++) {
@@ -518,11 +556,8 @@ static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinf
 static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_str_t format, ngx_str_t ipaddr) {
     ngx_str_t content;
     u_char b[1024];
-    ngx_str_t *ipinfo_a = ipinfo->a->elts;
 
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "country: %V, province: %V, type: %V ", ipinfo_a, ipinfo_a + 1, ipinfo_a + 5);
-
-    if (ipinfo->ret == 1) {
+    if (ipinfo->ret == SUCCESS) {
         if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2) == 0) {
             ngx_array_t *ipinfo_a_u = ipinfo_decode_array(r, ipinfo->a);
             ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
@@ -538,7 +573,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
             ngx_snprintf(b, sizeof(b) - 1, "1\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%Z", ipinfo_g, ipinfo_g + 1, ipinfo_g + 2, ipinfo_g + 3, ipinfo_g + 4, ipinfo_g + 5);
         }
     } else {
-        ngx_snprintf(b, sizeof(b) - 1, "%d", ipinfo->ret);
+        ngx_snprintf(b, sizeof(b) - 1, "%d%Z", ipinfo->ret);
     }
 
     content.data = b;

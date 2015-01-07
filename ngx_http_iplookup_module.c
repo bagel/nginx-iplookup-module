@@ -468,28 +468,46 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
 
 static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item) {
     u_char b[128];
-    int n;
+    int n, len;
     uint32_t t;
+    u_char *item, *next;
 
     s[0] = '\0';
-    n = ngx_utf8_length(ipinfo_item->data, ipinfo_item->len);
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item n: %d %V", n, ipinfo_item);
-    if (n <= 0) {
+    len = ngx_utf8_length(ipinfo_item->data, ipinfo_item->len);
+    if (len <= 0) {
         return s;
     }
+    n = ipinfo_item->len;
+    item = ipinfo_item->data;
 
-    int i;
+    next = item;
+    int i, j;
+    int len_s, len_b;
     for (i = 0; i < n; i++) {
-        t = ngx_utf8_decode(&ipinfo_item->data, ipinfo_item->len);
+        len_s = ngx_strlen(s);
+        if (*(item + i) < 0x80) {
+            s[len_s] = *(item + i);
+            s[len_s + 1] = '\0';
+            len--;
+            next = item + i;
+            continue;
+        }
+        t = ngx_utf8_decode(&next, len);
+        if (t > 0x10ffff) {
+            break;
+        }
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item t: %uD ", t);
         ngx_memzero(&b, sizeof(b));
-        ngx_snprintf(b, sizeof(b) - 1, "\\u%uXD%Z", t);
+        ngx_snprintf(b, sizeof(b), "\\u%uXD%Z", t);
         ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item unicode: %s ", b);
-        int len_b = ngx_strlen(b);
-        int len_s = ngx_strlen(s);
-        int j;
-        for (j = 0; j <= len_b; j++) {
+        len_b = ngx_strlen(b);
+        for (j = 0; j < len_b; j++) {
             s[len_s + j] = ngx_tolower(b[j]);
         }
+        s[len_s + len_b] = '\0';
+
+        len--;
+        next = item + i;
     }
 
     return s;

@@ -164,17 +164,17 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     u_char *start;
     ngx_str_t ipaddr;
     u_char *content_type;
-    struct timeval tv;
-    uint64_t t0, t1;
+    //struct timeval tv;
+    //uint64_t t0, t1;
 
     ngx_http_iplookup_loc_conf_t *conf;
     conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
 
     //rc = ngx_http_discard_body(r);
 
-    ngx_gettimeofday(&tv);
-    t0 = tv.tv_sec * 1000000 + tv.tv_usec;
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "start: %uLus", t0);
+    //ngx_gettimeofday(&tv);
+    //t0 = tv.tv_sec * 1000000 + tv.tv_usec;
+    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "start: %uLus", t0);
 
     ngx_http_iplookup_args_t *args = parse_args(r);
     
@@ -224,9 +224,9 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
 
     rc = ngx_http_send_header(r);
 
-    ngx_gettimeofday(&tv);
-    t1 = tv.tv_sec * 1000000 + tv.tv_usec;
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "end: %uLus", t1 - t0);
+    //ngx_gettimeofday(&tv);
+    //t1 = tv.tv_sec * 1000000 + tv.tv_usec;
+    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "end: %uLus", t1 - t0);
 
     return ngx_http_output_filter(r, &out);
 }
@@ -311,7 +311,6 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
     ngx_str_null(&args->format);
 
     if (r->args.data == NULL) {
-        //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args is null");
         return args;
     }
 
@@ -324,8 +323,6 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
         }
         args_temp.len = args_next.len - (args_temp.data - args_next.data);
 
-        //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args_temp: %s ", args_temp.data);
-        
         if (ngx_strncmp(args_next.data, (const char *) "ip=", 3) == 0) {
             args->ip.len = (args_temp.data - args_next.data) - 3;
             args->ip.data = args_next.data + 3;
@@ -497,45 +494,37 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
 
 static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item) {
     u_char b[128];
-    int n, len;
+    int n;
     uint32_t t;
-    u_char *item, *next;
 
     s[0] = '\0';
-    len = ngx_utf8_length(ipinfo_item->data, ipinfo_item->len);
-    if (len <= 0) {
+    n = ngx_utf8_length(ipinfo_item->data, ipinfo_item->len);
+    if (n <= 0) {
         return s;
     }
-    n = ipinfo_item->len;
-    item = ipinfo_item->data;
 
-    next = item;
     int i, j;
     int len_s, len_b;
     for (i = 0; i < n; i++) {
-        len_s = ngx_strlen(s);
-        if (*(item + i) < 0x80) {
-            s[len_s] = *(item + i);
-            s[len_s + 1] = '\0';
-            len--;
-            next = item + i;
+        if (*(ipinfo_item->data + i) < 0x80) {
+            len_s = ngx_strlen(s);
+            s[len_s] = *(ipinfo_item->data + i);
+            s[len_s + 1] = '\0';;
             continue;
         }
-        t = ngx_utf8_decode(&next, len);
+        t = ngx_utf8_decode(&ipinfo_item->data, ipinfo_item->len);
         if (t > 0x10ffff) {
-            break;
+            continue;
         }
         ngx_memzero(&b, sizeof(b));
         ngx_snprintf(b, sizeof(b), "\\u%uXD%Z", t);
         //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item unicode: %s ", b);
+        len_s = ngx_strlen(s);
         len_b = ngx_strlen(b);
         for (j = 0; j < len_b; j++) {
             s[len_s + j] = ngx_tolower(b[j]);
         }
         s[len_s + len_b] = '\0';
-
-        len--;
-        next = item + i;
     }
 
     return s;
@@ -553,6 +542,7 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
     for (i = 0; i < m; i++) {
         item = (ngx_str_t *) ngx_array_push(ipinfo_a_u);
         ngx_memzero(s, sizeof(s));
+        //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item: %V ", ipinfo_a + i);
         ipinfo_decode_item(r, s, ipinfo_a + i);
         item->len = ngx_strlen(s);
         item->data = ngx_pcalloc(r->pool, sizeof(s));

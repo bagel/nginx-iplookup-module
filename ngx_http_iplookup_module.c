@@ -15,6 +15,8 @@
 
 typedef struct {
     ngx_str_t database;
+    DB *dbp;
+    DBC *dbcp;
 } ngx_http_iplookup_loc_conf_t;
 
 
@@ -32,6 +34,8 @@ typedef struct {
     ngx_array_t *a;
 } ngx_http_iplookup_ipinfo_t;
 
+
+static char *ngx_conf_set_iplookup_database(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
 static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf);
 
@@ -66,7 +70,8 @@ static ngx_command_t ngx_http_iplookup_commands[] = {
     {
         ngx_string("iplookup"),
         NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
-        ngx_conf_set_str_slot,
+        //ngx_conf_set_str_slot,
+        ngx_conf_set_iplookup_database,
         NGX_HTTP_LOC_CONF_OFFSET,
         offsetof(ngx_http_iplookup_loc_conf_t, database),
         NULL
@@ -103,6 +108,35 @@ ngx_module_t ngx_http_iplookup_module = {
 };
 
 
+static char *ngx_conf_set_iplookup_database(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
+    ngx_http_iplookup_loc_conf_t *lkcf = conf;
+    ngx_str_t *value;
+    ngx_file_info_t fi;
+    int rt;
+
+    value = cf->args->elts;
+    if (ngx_file_info(value[1].data, &fi) == NGX_FILE_ERROR) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "iplookup database \"%V\" not exist", &value[1]);
+        return NGX_CONF_ERROR;
+    }
+    if (!ngx_is_file(&fi)) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "iplookup database \"%V\" not regular file", &value[1]);
+        return NGX_CONF_ERROR;
+    }
+
+    db_create(&lkcf->dbp, NULL, 0);
+    lkcf->dbp->set_bt_compare(lkcf->dbp, compare_bt);
+    rt = lkcf->dbp->open(lkcf->dbp, NULL, (const char *) value[1].data, NULL, DB_BTREE, DB_RDONLY, 0);
+    if (rt > 0) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "iplookup database \"%V\" open fail", &value[1]);
+        return NGX_CONF_ERROR;
+    }
+    lkcf->dbp->cursor(lkcf->dbp, NULL, &lkcf->dbcp, 0);
+ 
+    return NGX_CONF_OK;
+}
+
+
 static void *ngx_http_iplookup_create_loc_conf(ngx_conf_t *cf) {
     ngx_http_iplookup_loc_conf_t *conf;
     conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_iplookup_loc_conf_t));
@@ -118,6 +152,7 @@ static char *ngx_http_iplookup_merge_loc_conf(ngx_conf_t *cf, void *parent, void
     ngx_http_iplookup_loc_conf_t *prev = parent;
     ngx_http_iplookup_loc_conf_t *conf = child;
     ngx_conf_merge_str_value(conf->database, prev->database, (u_char *) "/usr/local/share/iplookup/ip.db");
+
     return NGX_CONF_OK;
 }
 
@@ -129,11 +164,17 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     u_char *start;
     ngx_str_t ipaddr;
     u_char *content_type;
+    struct timeval tv;
+    uint64_t t0, t1;
 
     ngx_http_iplookup_loc_conf_t *conf;
     conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
 
     //rc = ngx_http_discard_body(r);
+
+    ngx_gettimeofday(&tv);
+    t0 = tv.tv_sec * 1000000 + tv.tv_usec;
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "start: %uLus", t0);
 
     ngx_http_iplookup_args_t *args = parse_args(r);
     
@@ -155,7 +196,6 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     }
 
     ngx_int_t n = ipaddr_number(r, ipaddr);
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num n: %L ", n);
     ngx_str_t ipinfo_s = search_db(r, conf, n, ipaddr);
     ngx_http_iplookup_ipinfo_t *ipinfo = format_ipinfo(r, ipinfo_s);
     ngx_str_t content = content_result(r, ipinfo, args->format, ipaddr);
@@ -183,6 +223,10 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     b->last_buf = 1;
 
     rc = ngx_http_send_header(r);
+
+    ngx_gettimeofday(&tv);
+    t1 = tv.tv_sec * 1000000 + tv.tv_usec;
+    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "end: %uLus", t1 - t0);
 
     return ngx_http_output_filter(r, &out);
 }
@@ -228,8 +272,6 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
         return rs;
     }
 
-    DB *dbp;
-    DBC *dbcp;
     DBT key, data;
     u_char s[128];
     int rn;
@@ -244,11 +286,7 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     data.ulen = sizeof(b) - 1;
     data.flags = DB_DBT_USERMEM;
     
-    db_create(&dbp, NULL, 0);
-    dbp->set_bt_compare(dbp, compare_bt);
-    dbp->open(dbp, NULL, (const char *) conf->database.data, NULL, DB_BTREE, DB_RDONLY, 0);
-    dbp->cursor(dbp, NULL, &dbcp, 0);
-    rn = dbcp->get(dbcp, &key, &data, DB_SET_RANGE);
+    rn = conf->dbcp->get(conf->dbcp, &key, &data, DB_SET_RANGE);
     if (rn == 0) {
         ngx_snprintf(b, sizeof(b), "%d\t%s%Z", SUCCESS, s);
     } else {
@@ -257,9 +295,6 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
 
     rs.data = b;
     rs.len = ngx_strlen(b);
-
-    dbcp->close(dbcp);
-    dbp->close(dbp, 0);
 
     return rs;
 }
@@ -276,7 +311,7 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
     ngx_str_null(&args->format);
 
     if (r->args.data == NULL) {
-        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args is null");
+        //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args is null");
         return args;
     }
 
@@ -289,13 +324,12 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
         }
         args_temp.len = args_next.len - (args_temp.data - args_next.data);
 
-        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args_temp: %s ", args_temp.data);
+        //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "args_temp: %s ", args_temp.data);
         
         if (ngx_strncmp(args_next.data, (const char *) "ip=", 3) == 0) {
             args->ip.len = (args_temp.data - args_next.data) - 3;
             args->ip.data = args_next.data + 3;
-        }
-        if (ngx_strncmp(args_next.data, (const char *) "format=", 7) == 0) {
+        } else if (ngx_strncmp(args_next.data, (const char *) "format=", 7) == 0) {
             args->format.len = (args_temp.data - args_next.data) - 7;
             args->format.data = args_next.data + 7;
         }
@@ -309,8 +343,7 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
     if (ngx_strncmp(args_next.data, (const char *) "ip=", 3) == 0) {
         args->ip.len = args_next.len - 3;
         args->ip.data = args_next.data + 3;
-    }
-    if (ngx_strncmp(args_next.data, (const char *) "format=", 7) == 0) {
+    } else if (ngx_strncmp(args_next.data, (const char *) "format=", 7) == 0) {
         args->format.len = args_next.len - 7;
         args->format.data = args_next.data + 7;
     }
@@ -329,7 +362,6 @@ static int64_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
     for (i = 3; i > 0; i--) {
         addr_temp.data = ngx_strlchr(addr_next.data, addr_next.data + addr_next.len, '.');
         if (addr_temp.data == NULL) {
-            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "n temp %d", n);
             return ERROR_INVALID;
         }
         addr_temp.len = addr_next.len - (addr_temp.data - addr_next.data);
@@ -339,7 +371,6 @@ static int64_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
 
         rt = ngx_atoi(addr_num.data, addr_num.len) * pow(2, 8 * i);
         if (rt == NGX_ERROR) {
-            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "n atoi %d", n);
             return ERROR_INVALID;
         }
         n += rt;
@@ -349,19 +380,17 @@ static int64_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
     }
     rt = ngx_atoi(addr_next.data, addr_next.len);
     if (rt == NGX_ERROR) {
-        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "n atoi2 %d", n);
         return ERROR_INVALID;
     }
     n += rt;
 
     if (n < -10) {
-        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "n %d", n);
         return ERROR_INVALID;
     } else if ((n >= 167772160 && n <= 184549375) || (n >= 3232235520 && n <= 3232301055) || (n >= 2886729728 && n <= 2887778303)) {
         return ERROR_INTRANET;
     }
 
-    ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num: %L ", n);
+    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "addr_num: %L ", n);
 
     return n;
 }
@@ -496,10 +525,9 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipi
         if (t > 0x10ffff) {
             break;
         }
-        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item t: %uD ", t);
         ngx_memzero(&b, sizeof(b));
         ngx_snprintf(b, sizeof(b), "\\u%uXD%Z", t);
-        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item unicode: %s ", b);
+        //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item unicode: %s ", b);
         len_b = ngx_strlen(b);
         for (j = 0; j < len_b; j++) {
             s[len_s + j] = ngx_tolower(b[j]);

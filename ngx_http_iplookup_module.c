@@ -37,7 +37,7 @@ typedef struct {
 
 static char *ngx_conf_set_iplookup_database(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 
-static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf);
+//static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf);
 
 static void *ngx_http_iplookup_create_loc_conf(ngx_conf_t *cf);
 
@@ -82,7 +82,8 @@ static ngx_command_t ngx_http_iplookup_commands[] = {
 
 static ngx_http_module_t ngx_http_iplookup_module_ctx = {
     NULL,
-    ngx_http_iplookup_init,
+    //ngx_http_iplookup_init,
+    NULL,
     NULL,
     NULL,
     NULL,
@@ -110,6 +111,7 @@ ngx_module_t ngx_http_iplookup_module = {
 
 static char *ngx_conf_set_iplookup_database(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) {
     ngx_http_iplookup_loc_conf_t *lkcf = conf;
+    ngx_http_core_loc_conf_t *clcf;
     ngx_str_t *value;
     ngx_file_info_t fi;
     int rt;
@@ -132,6 +134,9 @@ static char *ngx_conf_set_iplookup_database(ngx_conf_t *cf, ngx_command_t *cmd, 
         return NGX_CONF_ERROR;
     }
     lkcf->dbp->cursor(lkcf->dbp, NULL, &lkcf->dbcp, 0);
+
+    clcf = ngx_http_conf_get_module_loc_conf(cf, ngx_http_core_module);
+    clcf->handler = ngx_http_iplookup_handler;
  
     return NGX_CONF_OK;
 }
@@ -189,7 +194,7 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     r->headers_out.content_type.len = ngx_strlen(content_type);
     r->headers_out.content_type.data = content_type;
 
-    if (args->ip.data == NULL) {
+    if (args->ip.data == NULL || args->ip.len == 0) {
         ipaddr = r->connection->addr_text;
     } else {
         ipaddr = args->ip;
@@ -232,6 +237,7 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
 }
 
 
+/*
 static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf) {
     ngx_http_handler_pt *h;
     ngx_http_core_main_conf_t *cmcf;
@@ -246,6 +252,7 @@ static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf) {
 
     return NGX_OK;
 }
+*/
 
 
 static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {

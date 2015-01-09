@@ -166,20 +166,27 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     ngx_int_t rc;
     ngx_buf_t *b;
     ngx_chain_t out;
-    u_char *start;
+    u_char *s;
     ngx_str_t ipaddr;
     u_char *content_type;
     //struct timeval tv;
     //uint64_t t0, t1;
 
-    ngx_http_iplookup_loc_conf_t *conf;
-    conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
-
-    //rc = ngx_http_discard_body(r);
-
     //ngx_gettimeofday(&tv);
     //t0 = tv.tv_sec * 1000000 + tv.tv_usec;
     //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "start: %uLus", t0);
+
+    ngx_http_iplookup_loc_conf_t *conf;
+    conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
+
+    if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
+        return NGX_HTTP_NOT_ALLOWED;
+    }
+
+    rc = ngx_http_discard_request_body(r);
+    if (rc != NGX_OK && rc != NGX_AGAIN) {
+        return rc;
+    }
 
     ngx_http_iplookup_args_t *args = parse_args(r);
     
@@ -218,16 +225,19 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     out.buf = b;
     out.next = NULL;
 
-    start = ngx_palloc(r->pool, content.len);
-    ngx_memcpy(start, content.data, content.len);
+    s = ngx_palloc(r->pool, content.len);
+    ngx_memcpy(s, content.data, content.len);
 
-    b->pos = start;
-    b->last = start + content.len;
+    b->pos = s;
+    b->last = s + content.len;
 
     b->memory = 1;
     b->last_buf = 1;
 
     rc = ngx_http_send_header(r);
+    if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
+        return rc;
+    }
 
     //ngx_gettimeofday(&tv);
     //t1 = tv.tv_sec * 1000000 + tv.tv_usec;

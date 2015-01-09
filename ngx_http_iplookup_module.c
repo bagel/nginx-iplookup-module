@@ -59,7 +59,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
 
 static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipinfo);
 
-static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item);
+static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *ipinfo_item);
 
 static void *ipinfo_iconv_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item);
 
@@ -499,40 +499,39 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
 }
 
 
-static void *ipinfo_decode_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item) {
-    u_char b[128];
+static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *ipinfo_item) {
+    u_char b[128], p[128];
     int n;
     uint32_t t;
 
-    s[0] = '\0';
     n = ngx_utf8_length(ipinfo_item->data, ipinfo_item->len);
     if (n <= 0) {
         return s;
     }
 
-    int i, j;
-    int len_s, len_b;
+    int i, j, k=0, bn;
     for (i = 0; i < n; i++) {
         if (*(ipinfo_item->data + i) < 0x80) {
-            len_s = ngx_strlen(s);
-            s[len_s] = *(ipinfo_item->data + i);
-            s[len_s + 1] = '\0';;
+            p[k] = *(ipinfo_item->data + i);
+            k++;
             continue;
         }
         t = ngx_utf8_decode(&ipinfo_item->data, ipinfo_item->len);
         if (t > 0x10ffff) {
-            continue;
+            return s;
         }
         ngx_memzero(&b, sizeof(b));
         ngx_snprintf(b, sizeof(b), "\\u%uXD%Z", t);
         //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item unicode: %s ", b);
-        len_s = ngx_strlen(s);
-        len_b = ngx_strlen(b);
-        for (j = 0; j < len_b; j++) {
-            s[len_s + j] = ngx_tolower(b[j]);
+        bn = ngx_strlen(b);
+        for (j = 0; j < bn; j++) {
+            p[k] = ngx_tolower(b[j]);
+            k++;
         }
-        s[len_s + len_b] = '\0';
     }
+
+    s->len = k;
+    s->data = p;
 
     return s;
 }
@@ -544,20 +543,17 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
 
     ngx_array_t *ipinfo_a_u = ngx_array_create(r->pool, m, sizeof(ngx_str_t));
     ngx_str_t *item;
-    u_char s[128];
+    ngx_str_t *s;
+    s = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
     int i;
     for (i = 0; i < m; i++) {
         item = (ngx_str_t *) ngx_array_push(ipinfo_a_u);
-        ngx_memzero(s, sizeof(s));
-        //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item: %V ", ipinfo_a + i);
+        ngx_str_null(s);
         ipinfo_decode_item(r, s, ipinfo_a + i);
-        item->len = ngx_strlen(s);
-        item->data = ngx_pcalloc(r->pool, sizeof(s));
-        ngx_memcpy(item->data, s, sizeof(s));
+        item->len = s->len;
+        item->data = ngx_pcalloc(r->pool, s->len);
+        ngx_memcpy(item->data, s->data, s->len);
     }
-
-    //ngx_str_t *ipinfo_u = ipinfo_a_u->elts;
-    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item test array: %V ", ipinfo_u);
 
     return ipinfo_a_u;
 }
@@ -568,17 +564,18 @@ static void *ipinfo_iconv_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipin
     char *in = (char *) ipinfo_item->data;
     char *ou = (char *) s;
     size_t inleft = ipinfo_item->len;
-    size_t ouleft = ipinfo_item->len * 3;
+    size_t ouleft = ipinfo_item->len;
     size_t rt;
 
     icp = iconv_open("GBK", "UTF-8");
     rt = iconv(icp, &in, &inleft, &ou, &ouleft);
+    if (rt == (size_t) -1) {
+        return s;
+    }
     //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "iconv %V ret: %d ", ipinfo_item, rt);
     iconv_close(icp);
 
-    s[ipinfo_item->len * 3 - ouleft] = '\0';
-
-    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "iconv %V len: %d inleft: %d ouleft: %d strlen: %d ", ipinfo_item, ipinfo_item->len * 3, inleft, ouleft, ngx_strlen(s));
+    s[ipinfo_item->len - ouleft] = '\0';
 
     return s;
 }

@@ -9,8 +9,9 @@
 
 #define SUCCESS 1
 #define ERROR_INTRANET -1
-#define ERROR_NOTSEARCH -2
+#define ERROR_NOTFOUND -2
 #define ERROR_INVALID -3
+#define ERROR_DBFAIL -4
 
 
 typedef struct {
@@ -57,7 +58,7 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r);
 
 static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_t ipinfo_s);
 
-static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_str_t format, ngx_str_t ipaddr, ngx_http_iplookup_loc_conf_t *conf);
+static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_str_t format, ngx_str_t ipaddr, ngx_http_iplookup_loc_conf_t *conf, int64_t n);
 
 static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipinfo);
 
@@ -220,10 +221,10 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
         ipaddr = args->ip;
     }
 
-    ngx_int_t n = ipaddr_number(r, ipaddr);
+    int64_t n = ipaddr_number(r, ipaddr);
     ngx_str_t ipinfo_s = search_db(r, conf, n, ipaddr);
     ngx_http_iplookup_ipinfo_t *ipinfo = format_ipinfo(r, ipinfo_s);
-    ngx_str_t content = content_result(r, ipinfo, args->format, ipaddr, conf);
+    ngx_str_t content = content_result(r, ipinfo, args->format, ipaddr, conf, n);
 
     if (content.data == NULL) {
         content.len = sizeof("fail") - 1;
@@ -329,8 +330,10 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     rn = conf->dbcp->get(conf->dbcp, &key, &data, DB_SET_RANGE);
     if (rn == 0) {
         ngx_snprintf(b, sizeof(b), "%d\t%s%Z", SUCCESS, s);
+    } else if (rn == DB_NOTFOUND) {
+        ngx_snprintf(b, sizeof(b), "%d%Z", ERROR_NOTFOUND);
     } else {
-        ngx_snprintf(b, sizeof(b), "%d%Z", ERROR_NOTSEARCH);
+        ngx_snprintf(b, sizeof(b), "%d%Z", ERROR_DBFAIL);
     }
 
     rs.data = b;
@@ -346,9 +349,7 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
 
     ngx_http_iplookup_args_t *args;
     args = ngx_pcalloc(r->pool, sizeof(ngx_http_iplookup_args_t));
-
-    ngx_str_null(&args->ip);
-    ngx_str_null(&args->format);
+ngx_str_null(&args->ip); ngx_str_null(&args->format);
 
     if (r->args.data == NULL) {
         return args;
@@ -543,7 +544,7 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *
     if (n <= 0) {
         return s;
     }
-    if (*(ipinfo_item->data) < 0x80) {  /*this is a bug*/
+    if (*(ipinfo_item->data) < 0x80) {  /*this is a bug need fix*/
         s->data = ipinfo_item->data;
         s->len = ipinfo_item->len;
         return s;
@@ -637,7 +638,7 @@ static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinf
 }
 
 
-static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_str_t format, ngx_str_t ipaddr, ngx_http_iplookup_loc_conf_t *conf) {
+static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_str_t format, ngx_str_t ipaddr, ngx_http_iplookup_loc_conf_t *conf, int64_t n) {
     ngx_str_t content;
     u_char b[1024];
     ngx_array_t *ipinfo_a_u;
@@ -648,7 +649,10 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
     u_char desc_g[128];
     
     if (ipinfo->ret == SUCCESS) {
-        if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2) == 0 && format.len == 2) {
+        if (n < ipinfo->start) {
+            ipinfo->ret = ERROR_NOTFOUND;
+            ngx_snprintf(b, sizeof(b) - 1, "%d%Z", ipinfo->ret);
+        } else if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2) == 0 && format.len == 2) {
             ipinfo_a_u = ipinfo_decode_array(r, ipinfo->a);
             ipinfo_u = ipinfo_a_u->elts;
             if (conf->extra == 1) {
@@ -677,7 +681,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
             }
         }
     } else if (ipinfo->ret == ERROR_INTRANET) {
-        if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2 && format.len == 2) == 0) {
+        if (format.data != NULL && ngx_strncmp(format.data, (const char *) "js", 2) == 0 && format.len == 2) {
             ngx_snprintf(b, sizeof(b), "var remote_ip_info = {\"ret\":%d,\"ip\":\"%V\"};%Z", ipinfo->ret, &ipinfo->intip);
         } else if (format.data != NULL && ngx_strncmp(format.data, (const char *) "json", 4) == 0 && format.len == 4) {
             ngx_snprintf(b, sizeof(b), "{\"ret\":%d,\"ip\":\"%V\"}%Z", ipinfo->ret, &ipinfo->intip);

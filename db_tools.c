@@ -207,7 +207,7 @@ int main (int argc, char *argv[]) {
         if (id != 0 && db != NULL) {
             get((const char *) db, id);
         } else {
-            fprintf(stderr, "Usage: %s -g -d ip.db -i id\n", argv[0], argv[0]);
+            fprintf(stderr, "Usage: %s -g -d ip.db -i id\n", argv[0]);
             exit(1);
         }
     } else if (put_flag == 1) {

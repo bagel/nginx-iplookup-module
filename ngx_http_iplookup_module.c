@@ -64,7 +64,7 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
 
 static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *ipinfo_item);
 
-static void *ipinfo_iconv_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item);
+static void *ipinfo_iconv_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *ipinfo_item);
 
 static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinfo);
 
@@ -601,23 +601,34 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
 }
 
 
-static void *ipinfo_iconv_item(ngx_http_request_t *r, u_char *s, ngx_str_t *ipinfo_item) {
+static void *ipinfo_iconv_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *ipinfo_item) {
     iconv_t icp;
+    u_char p[128];
     char *in = (char *) ipinfo_item->data;
-    char *ou = (char *) s;
+    char *ou = (char *) p;
     size_t inleft = ipinfo_item->len;
     size_t ouleft = ipinfo_item->len;
     size_t rt;
+    size_t i, n;
+
+    if (ipinfo_item->data == NULL || ipinfo_item->len == 0) {
+        return s;
+    }
 
     icp = iconv_open("GBK", "UTF-8");
     rt = iconv(icp, &in, &inleft, &ou, &ouleft);
+    n = ipinfo_item->len - ouleft;
     if (rt == (size_t) -1) {
-        return s;
+        for (i = 0; i < inleft; i++ ) {
+            p[n] = *(in + i);
+            n++;
+        }
     }
-    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "iconv %V ret: %d ", ipinfo_item, rt);
     iconv_close(icp);
+    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item: %V, p: %s ", ipinfo_item, p);
 
-    s[ipinfo_item->len - ouleft] = '\0';
+    s->data = p;
+    s->len = n;
 
     return s;
 }
@@ -629,15 +640,16 @@ static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinf
 
     ngx_array_t *ipinfo_a_g = ngx_array_create(r->pool, m, sizeof(ngx_str_t));
     ngx_str_t *item;
-    u_char s[128];
+    ngx_str_t *s;
+    s = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
     int i;
     for (i = 0; i < m; i++) {
         item = (ngx_str_t *) ngx_array_push(ipinfo_a_g);
-        ngx_memzero(s, sizeof(s));
+        ngx_str_null(s);
         ipinfo_iconv_item(r, s, ipinfo_a + i);
-        item->len = ngx_strlen(s);
-        item->data = ngx_pcalloc(r->pool, sizeof(s));
-        ngx_memcpy(item->data, s, sizeof(s));
+        item->len = s->len;
+        item->data = ngx_pcalloc(r->pool, s->len);
+        ngx_memcpy(item->data, s->data, s->len);
     }
  
     return ipinfo_a_g;
@@ -652,9 +664,10 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
     ngx_str_t desc_u;
     ngx_array_t *ipinfo_a_g;
     ngx_str_t *ipinfo_g;
-    u_char desc_g[128];
+    ngx_str_t desc_g;
 
     ngx_str_null(&desc_u);
+    ngx_str_null(&desc_g);
 
     if (ipinfo->ret == SUCCESS) {
         if (n < ipinfo->start) {
@@ -736,9 +749,9 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
             ipinfo_a_g = ipinfo_iconv_array(r, ipinfo->a);
             ipinfo_g = ipinfo_a_g->elts;
             if (conf->extra == 1) {
-                ipinfo_iconv_item(r, desc_g, &ipinfo->desc);
+                ipinfo_iconv_item(r, &desc_g, &ipinfo->desc);
                 ngx_snprintf(b, sizeof(b), 
-                    "%d\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%s%Z", 
+                    "%d\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%V%Z", 
                     ipinfo->ret, 
                     ipinfo_g, 
                     ipinfo_g + 1, 
@@ -746,7 +759,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
                     ipinfo_g + 3, 
                     ipinfo_g + 4, 
                     ipinfo_g + 5, 
-                    desc_g);
+                    &desc_g);
             } else {
                 ngx_snprintf(b, sizeof(b), 
                     "%d\t-1\t-1\t%V\t%V\t%V\t%V\t\t\t%Z", 

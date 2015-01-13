@@ -542,6 +542,10 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *
     int n;
     uint32_t t;
 
+    if (ipinfo_item->data == NULL || ipinfo_item->len == 0) {
+        return s;
+    }
+
     n = ngx_utf8_length(ipinfo_item->data, ipinfo_item->len);
     if (n <= 0) {
         return s;
@@ -649,7 +653,9 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
     ngx_array_t *ipinfo_a_g;
     ngx_str_t *ipinfo_g;
     u_char desc_g[128];
-    
+
+    ngx_str_null(&desc_u);
+
     if (ipinfo->ret == SUCCESS) {
         if (n < ipinfo->start) {
             ipinfo->ret = ERROR_NOTFOUND;
@@ -667,7 +673,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
                     "\"district\":\"%V\","
                     "\"isp\":\"%V\","
                     "\"type\":\"%V\","
-                    "\"desc\":\"%V\"}%Z", 
+                    "\"desc\":\"%V\"};%Z", 
                     ipinfo->ret, 
                     ipinfo_u, 
                     ipinfo_u + 1, 
@@ -683,7 +689,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
                     "\"province\":\"%V\","
                     "\"city\":\"%V\","
                     "\"district\":\"%V\","
-                    "\"isp\":\"\",\"type\":\"\",\"desc\":\"\"}%Z", 
+                    "\"isp\":\"\",\"type\":\"\",\"desc\":\"\"};%Z", 
                     ipinfo->ret, 
                     ipinfo_u, 
                     ipinfo_u + 1, 

@@ -550,26 +550,27 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *
     if (n <= 0) {
         return s;
     }
-    if (*(ipinfo_item->data) < 0x80) {  /*this is a bug need fix*/
-        s->data = ipinfo_item->data;
-        s->len = ipinfo_item->len;
-        return s;
-    }
 
+    u_char *item = ipinfo_item->data;
+    int len = ipinfo_item->len;
     int i, j, k=0, bn;
     for (i = 0; i < n; i++) {
-        t = ngx_utf8_decode(&ipinfo_item->data, ipinfo_item->len);
-        if (t == 0xffffffff) {
+        t = ngx_utf8_decode(&item, len);
+        if (t < 0x80 || t > 0x10ffff) {
+            p[k] = *(item - 1);
+            k++;
             continue;
         }
         ngx_memzero(&b, sizeof(b));
-        ngx_snprintf(b, sizeof(b), "\\u%uXD%Z", t);
+        ngx_snprintf(b, sizeof(b), "\\u%04uXD%Z", t);
         //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item unicode: %s ", b);
         bn = ngx_strlen(b);
         for (j = 0; j < bn; j++) {
             p[k] = ngx_tolower(b[j]);
             k++;
         }
+
+        len = ipinfo_item->len - (item - ipinfo_item->data);
     }
 
     s->len = k;

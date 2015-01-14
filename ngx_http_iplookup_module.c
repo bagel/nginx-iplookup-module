@@ -34,7 +34,6 @@ typedef struct {
     int64_t end;
     ngx_str_t intip;
     ngx_array_t *a;
-    ngx_str_t desc;
 } ngx_http_iplookup_ipinfo_t;
 
 
@@ -447,10 +446,10 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
         return ipinfo;
     }
 
-    ipinfo->a = ngx_array_create(r->pool, 6, sizeof(ngx_str_t));
+    ipinfo->a = ngx_array_create(r->pool, 7, sizeof(ngx_str_t));
     ngx_str_t *t;
     int k;
-    for (k = 0; k < 6; k++) {
+    for (k = 0; k < 7; k++) {
         t = (ngx_str_t *) ngx_array_push(ipinfo->a);
         t->data = NULL;
         t->len = 0;
@@ -529,8 +528,8 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
         }
 
     }
-    ipinfo->desc.data = ipinfo_next.data;
-    ipinfo->desc.len = ipinfo_next.len;
+    (ipinfo_a + 6)->data = ipinfo_next.data;
+    (ipinfo_a + 6)->len = ipinfo_next.len;
     //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "desc: %V ", &ipinfo->desc);
 
     return ipinfo;
@@ -556,6 +555,7 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *
     int i, j, k=0, bn;
     for (i = 0; i < n; i++) {
         t = ngx_utf8_decode(&item, len);
+        len = ipinfo_item->len - (item - ipinfo_item->data);
         if (t < 0x80 || t > 0x10ffff) {
             p[k] = *(item - 1);
             k++;
@@ -569,8 +569,6 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *
             p[k] = ngx_tolower(b[j]);
             k++;
         }
-
-        len = ipinfo_item->len - (item - ipinfo_item->data);
     }
 
     s->len = k;
@@ -662,13 +660,8 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
     u_char b[1024];
     ngx_array_t *ipinfo_a_u;
     ngx_str_t *ipinfo_u;
-    ngx_str_t desc_u;
     ngx_array_t *ipinfo_a_g;
     ngx_str_t *ipinfo_g;
-    ngx_str_t desc_g;
-
-    ngx_str_null(&desc_u);
-    ngx_str_null(&desc_g);
 
     if (ipinfo->ret == SUCCESS) {
         if (n < ipinfo->start) {
@@ -678,7 +671,6 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
             ipinfo_a_u = ipinfo_decode_array(r, ipinfo->a);
             ipinfo_u = ipinfo_a_u->elts;
             if (conf->extra == 1) {
-                ipinfo_decode_item(r, &desc_u, &ipinfo->desc);
                 ngx_snprintf(b, sizeof(b), 
                     "var remote_ip_info = {\"ret\":%d,\"start\":-1,\"end\":-1,"
                     "\"country\":\"%V\","
@@ -695,7 +687,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
                     ipinfo_u + 3, 
                     ipinfo_u + 4, 
                     ipinfo_u + 5, 
-                    &desc_u);
+                    ipinfo_u + 6);
             } else {
                 ngx_snprintf(b, sizeof(b), 
                     "var remote_ip_info = {\"ret\":%d,\"start\":-1,\"end\":-1,"
@@ -714,7 +706,6 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
             ipinfo_a_u = ipinfo_decode_array(r, ipinfo->a);
             ipinfo_u = ipinfo_a_u->elts;
             if (conf->extra == 1) {
-                ipinfo_decode_item(r, &desc_u, &ipinfo->desc);
                 ngx_snprintf(b, sizeof(b), 
                     "{\"ret\":%d,\"start\":-1,\"end\":-1,"
                     "\"country\":\"%V\","
@@ -731,7 +722,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
                     ipinfo_u + 3, 
                     ipinfo_u + 4, 
                     ipinfo_u + 5, 
-                    &desc_u);
+                    ipinfo_u + 6);
             } else {
                 ngx_snprintf(b, sizeof(b), 
                     "{\"ret\":%d,\"start\":-1,\"end\":-1,"
@@ -750,7 +741,6 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
             ipinfo_a_g = ipinfo_iconv_array(r, ipinfo->a);
             ipinfo_g = ipinfo_a_g->elts;
             if (conf->extra == 1) {
-                ipinfo_iconv_item(r, &desc_g, &ipinfo->desc);
                 ngx_snprintf(b, sizeof(b), 
                     "%d\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%V%Z", 
                     ipinfo->ret, 
@@ -760,7 +750,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
                     ipinfo_g + 3, 
                     ipinfo_g + 4, 
                     ipinfo_g + 5, 
-                    &desc_g);
+                    ipinfo_g + 6);
             } else {
                 ngx_snprintf(b, sizeof(b), 
                     "%d\t-1\t-1\t%V\t%V\t%V\t%V\t\t\t%Z", 

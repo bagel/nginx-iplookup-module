@@ -3,7 +3,7 @@ nginx-iplookup-module
 
 nginx iplookup module
 
-####nginx location iplookup config
+####iplookup config
 	
 	location /iplookup/extra {
 	        iplookup "/usr/local/share/iplookup/ip.db";

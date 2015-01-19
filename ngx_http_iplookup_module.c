@@ -181,12 +181,6 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     u_char *s;
     ngx_str_t ipaddr;
     u_char *content_type;
-    //struct timeval tv;
-    //uint64_t t0, t1;
-
-    //ngx_gettimeofday(&tv);
-    //t0 = tv.tv_sec * 1000000 + tv.tv_usec;
-    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "start: %uLus", t0);
     
     ngx_http_iplookup_loc_conf_t *conf;
     conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
@@ -234,6 +228,10 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     r->headers_out.content_length_n = content.len;
 
     b = ngx_pcalloc(r->pool, sizeof(ngx_buf_t));
+    if (b == NULL) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Failed to allocate memory for response buffer");
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
 
     out.buf = b;
     out.next = NULL;
@@ -251,10 +249,6 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
         return rc;
     }
-
-    //ngx_gettimeofday(&tv);
-    //t1 = tv.tv_sec * 1000000 + tv.tv_usec;
-    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "end: %uLus", t1 - t0);
 
     return ngx_http_output_filter(r, &out);
 }
@@ -348,7 +342,12 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
 
     ngx_http_iplookup_args_t *args;
     args = ngx_pcalloc(r->pool, sizeof(ngx_http_iplookup_args_t));
-ngx_str_null(&args->ip); ngx_str_null(&args->format);
+    if (args == NULL) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Failed to allocate memory for args");
+    }
+
+    ngx_str_null(&args->ip);
+    ngx_str_null(&args->format);
 
     if (r->args.data == NULL) {
         return args;
@@ -436,6 +435,9 @@ static int64_t ipaddr_number(ngx_http_request_t *r, ngx_str_t ipaddr) {
 static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_t ipinfo_s) {
     ngx_http_iplookup_ipinfo_t *ipinfo;
     ipinfo = ngx_pcalloc(r->pool, sizeof(ngx_http_iplookup_ipinfo_t));
+    if (ipinfo == NULL) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Failed to allocate memory for ipinfo");
+    }
 
     if (ngx_strncmp(ipinfo_s.data, (const char *) "-", 1) == 0) {
         ipinfo->ret = -(ngx_atoi(ipinfo_s.data + 1, 1));
@@ -586,6 +588,9 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
     ngx_str_t *item;
     ngx_str_t *s;
     s = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
+    if (s == NULL) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Failed to allocate memory for decode string");
+    }
     int i;
     for (i = 0; i < m; i++) {
         item = (ngx_str_t *) ngx_array_push(ipinfo_a_u);
@@ -593,6 +598,9 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
         ipinfo_decode_item(r, s, ipinfo_a + i);
         item->len = s->len;
         item->data = ngx_pcalloc(r->pool, s->len);
+        if (item->data == NULL) {
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Failed to allocate memory for decode item");
+        }
         ngx_memcpy(item->data, s->data, s->len);
     }
 
@@ -641,6 +649,9 @@ static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinf
     ngx_str_t *item;
     ngx_str_t *s;
     s = ngx_pcalloc(r->pool, sizeof(ngx_str_t));
+    if (s == NULL) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Failed to allocate memory for iconv string");
+    }
     int i;
     for (i = 0; i < m; i++) {
         item = (ngx_str_t *) ngx_array_push(ipinfo_a_g);
@@ -648,6 +659,9 @@ static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinf
         ipinfo_iconv_item(r, s, ipinfo_a + i);
         item->len = s->len;
         item->data = ngx_pcalloc(r->pool, s->len);
+        if (item->data == NULL) {
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Failed to allocate memory for iconv item");
+        }
         ngx_memcpy(item->data, s->data, s->len);
     }
  

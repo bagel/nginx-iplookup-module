@@ -69,6 +69,8 @@ static void *ipinfo_iconv_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *i
 
 static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinfo);
 
+static ngx_array_t *ipinfo_escape_array(ngx_http_request_t *r, ngx_array_t *ipinfo);
+
 
 static ngx_command_t ngx_http_iplookup_commands[] = {
     {
@@ -206,7 +208,11 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
             content_type = (u_char *) "application/json; charset=utf-8";
         }
     } else if (args->format.data != NULL && ngx_strncmp(args->format.data, (const char *) "js", 2) == 0) {
-        content_type = (u_char *) "text/javascript; charset=utf-8";
+        if (r->headers_in.msie == 1) {
+            content_type = (u_char *) "text/html; charset=utf-8";
+        } else {
+            content_type = (u_char *) "text/javascript; charset=utf-8";
+        }
     } else if (args->encoding.data != NULL && ngx_strncmp(args->encoding.data, (const char *) "utf-8", 5) == 0 && args->encoding.len == 5) {
         content_type = (u_char *) "text/html; charset=utf-8";
     } else {
@@ -227,8 +233,8 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     ngx_http_iplookup_ipinfo_t *ipinfo = format_ipinfo(r, ipinfo_s);
     ngx_str_t content = content_result(r, ipinfo, args, ipaddr, conf, n);
 
-    if (content.data == NULL) {
-        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "result is empty");
+    if (content.data == NULL || content.len == 0) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "content result is empty");
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
@@ -345,7 +351,6 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
 
 
 static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
-    ngx_int_t max_args = 10;
     ngx_str_t args_next, args_temp;
 
     ngx_http_iplookup_args_t *args;
@@ -364,12 +369,12 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
     }
 
     args_next = r->args;
-    int i = 0;
-    while (i < max_args) {
+    while (1) {
         args_temp.data = ngx_strlchr(args_next.data, args_next.data + args_next.len, '&');
         if (args_temp.data == NULL) {
-            break;
+            args_temp.data = r->args.data + r->args.len;
         }
+
         args_temp.len = args_next.len - (args_temp.data - args_next.data);
 
         if (ngx_strncmp(args_next.data, (const char *) "ip=", 3) == 0) {
@@ -388,26 +393,12 @@ static ngx_http_iplookup_args_t *parse_args(ngx_http_request_t *r) {
             args->obj.data = args_next.data + 4;
         }
 
+        if (args_temp.len == 0) {
+            break;
+        }
+
         args_next.data = args_temp.data + 1;
         args_next.len = args_temp.len - 1;
-
-        i++;
-    }
-
-    if (ngx_strncmp(args_next.data, (const char *) "ip=", 3) == 0) {
-        args->ip.len = args_next.len - 3;
-        args->ip.data = args_next.data + 3;
-    } else if (ngx_strncmp(args_next.data, (const char *) "format=", 7) == 0) {
-        args->format.len = args_next.len - 7;
-        args->format.data = args_next.data + 7;
-        ngx_strlow(args->format.data, args_next.data + 7, args->format.len);
-    } else if (ngx_strncmp(args_next.data, (const char *) "encoding=", 9) == 0) {
-        args->encoding.len = args_next.len - 9;
-        args->encoding.data = args_next.data + 9;
-        ngx_strlow(args->encoding.data, args_next.data + 9, args->encoding.len);
-    } else if (ngx_strncmp(args_next.data, (const char *) "obj=", 4) == 0) {
-        args->obj.len = args_next.len - 4;
-        args->obj.data = args_next.data + 4;
     }
 
     return args;
@@ -695,6 +686,30 @@ static ngx_array_t *ipinfo_iconv_array(ngx_http_request_t *r, ngx_array_t *ipinf
 }
 
 
+static ngx_array_t *ipinfo_escape_array(ngx_http_request_t *r, ngx_array_t *ipinfo) {
+    ngx_str_t *ipinfo_a = ipinfo->elts;
+    int m = ipinfo->nelts;
+
+    ngx_array_t *ipinfo_a_e = ngx_array_create(r->pool, m, sizeof(ngx_str_t));
+    ngx_str_t *item;
+    u_char s[128];
+    int i;
+    for (i = 0; i < m; i++) {
+        item = (ngx_str_t *) ngx_array_push(ipinfo_a_e);
+        ngx_memzero(&s, sizeof(s));
+        item->len = 2 * ngx_escape_uri(NULL, (ipinfo_a + i)->data, (ipinfo_a + i)->len, NGX_ESCAPE_URI_COMPONENT) + (ipinfo_a + i)->len;
+        ngx_escape_uri(s, (ipinfo_a + i)->data, (ipinfo_a + i)->len, NGX_ESCAPE_URI_COMPONENT);
+        item->data = ngx_pcalloc(r->pool, item->len);
+        if (item->data == NULL) {
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Failed to allocate memory for escape item");
+        }
+        ngx_memcpy(item->data, s, item->len);
+    }
+    
+    return ipinfo_a_e;
+}
+
+
 static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_t *ipinfo, ngx_http_iplookup_args_t *args, ngx_str_t ipaddr, ngx_http_iplookup_loc_conf_t *conf, int64_t n) {
     ngx_str_t content;
     u_char b[1024], c[1024];
@@ -702,6 +717,8 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
     ngx_str_t *ipinfo_u;
     ngx_array_t *ipinfo_a_g;
     ngx_str_t *ipinfo_g;
+    ngx_array_t *ipinfo_a_e;
+    ngx_str_t *ipinfo_e;
 
     if (ipinfo->ret == SUCCESS) {
         if (n < ipinfo->start) {
@@ -755,6 +772,37 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
             } else {
                 ngx_snprintf(b, sizeof(b), "var remote_ip_info = %s;%Z", c);
             }
+        } else if (args->format.data != NULL && ngx_strncmp(args->format.data, (const char *) "http", 4) == 0 && args->format.len == 4) {
+            if (args->encoding.data != NULL && ngx_strncmp(args->encoding.data, (const char *) "utf-8", 5) == 0 && args->encoding.len == 5) {
+                ipinfo_a_e = ipinfo_escape_array(r, ipinfo->a);
+            } else {
+                ipinfo_a_g = ipinfo_iconv_array(r, ipinfo->a);
+                ipinfo_a_e = ipinfo_escape_array(r, ipinfo_a_g);
+            }
+            ipinfo_e = ipinfo_a_e->elts;
+
+            if (conf->extra == 1) {
+                ngx_snprintf(b, sizeof(b),
+                    "ret=%d&start=-1&end=-1&country=%V&province=%V&"
+                    "city=%V&district=%V&isp=%V&type=%V&desc=%V%Z",
+                    ipinfo->ret,
+                    ipinfo_e,
+                    ipinfo_e + 1,
+                    ipinfo_e + 2,
+                    ipinfo_e + 3,
+                    ipinfo_e + 4,
+                    ipinfo_e + 5,
+                    ipinfo_e + 6);
+            } else {
+                ngx_snprintf(b, sizeof(b),
+                    "ret=%d&start=-1&end=-1&country=%V&province=%V&"
+                    "city=%V&district=&isp=&type=&desc=%Z",
+                    ipinfo->ret,
+                    ipinfo_e,
+                    ipinfo_e + 1,
+                    ipinfo_e + 2,
+                    ipinfo_e + 3);
+            }
         } else {
             if (args->encoding.data != NULL && ngx_strncmp(args->encoding.data, (const char *) "utf-8", 5) == 0 && args->encoding.len == 5) {
                 ipinfo_a_g = ipinfo->a;
@@ -762,6 +810,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
                 ipinfo_a_g = ipinfo_iconv_array(r, ipinfo->a);
             }
             ipinfo_g = ipinfo_a_g->elts;
+
             if (conf->extra == 1) {
                 ngx_snprintf(b, sizeof(b), 
                     "%d\t-1\t-1\t%V\t%V\t%V\t%V\t%V\t%V\t%V%Z", 

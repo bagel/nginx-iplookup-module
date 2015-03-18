@@ -7,11 +7,14 @@
 #include "code_map.h"
 
 
+#define ITEM_MAX_SIZE 128
+#define ITEM_LARGE_ERROR "large"
 #define SUCCESS 1
 #define ERROR_INTRANET -1
 #define ERROR_NOTFOUND -2
 #define ERROR_INVALID -3
 #define ERROR_DBFAIL -4
+#define ERROR_ITEMLARGE -5
 
 
 typedef struct {
@@ -190,7 +193,7 @@ static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r) {
     conf = ngx_http_get_module_loc_conf(r, ngx_http_iplookup_module);
     //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "extra: %d ", conf->extra);
 
-    if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
+    if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD|NGX_HTTP_POST))) {
         return NGX_HTTP_NOT_ALLOWED;
     }
 
@@ -692,12 +695,18 @@ static ngx_array_t *ipinfo_escape_array(ngx_http_request_t *r, ngx_array_t *ipin
 
     ngx_array_t *ipinfo_a_e = ngx_array_create(r->pool, m, sizeof(ngx_str_t));
     ngx_str_t *item;
-    u_char s[128];
+    u_char s[ITEM_MAX_SIZE];
     int i;
     for (i = 0; i < m; i++) {
         item = (ngx_str_t *) ngx_array_push(ipinfo_a_e);
         ngx_memzero(&s, sizeof(s));
         item->len = 2 * ngx_escape_uri(NULL, (ipinfo_a + i)->data, (ipinfo_a + i)->len, NGX_ESCAPE_URI_COMPONENT) + (ipinfo_a + i)->len;
+        if (item->len > ITEM_MAX_SIZE) {
+            ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Warning: escape item size %d too large (max size %d)", item->len, ITEM_MAX_SIZE);
+            item->data = (u_char *) ITEM_LARGE_ERROR;
+            item->len = ngx_strlen(ITEM_LARGE_ERROR); 
+            continue;
+        }
         ngx_escape_uri(s, (ipinfo_a + i)->data, (ipinfo_a + i)->len, NGX_ESCAPE_URI_COMPONENT);
         item->data = ngx_pcalloc(r->pool, item->len);
         if (item->data == NULL) {
@@ -796,7 +805,7 @@ static ngx_str_t content_result(ngx_http_request_t *r, ngx_http_iplookup_ipinfo_
             } else {
                 ngx_snprintf(b, sizeof(b),
                     "ret=%d&start=-1&end=-1&country=%V&province=%V&"
-                    "city=%V&district=&isp=&type=&desc=%Z",
+                    "city=%V&district=%V&isp=&type=&desc=%Z",
                     ipinfo->ret,
                     ipinfo_e,
                     ipinfo_e + 1,

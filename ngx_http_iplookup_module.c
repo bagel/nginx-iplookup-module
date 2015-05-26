@@ -56,7 +56,7 @@ static char *ngx_http_iplookup_merge_loc_conf(ngx_conf_t *cf, void *parent, void
 
 static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r);
 
-static int compare_bt(DB *dbp, const DBT *a, const DBT *b, size_t *locp);
+static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
 
 static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n, ngx_str_t ipaddr);
 
@@ -293,7 +293,7 @@ static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf) {
 */
 
 
-static int compare_bt(DB *dbp, const DBT *a, const DBT *b, size_t *locp) {
+static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {
     int64_t ai, bi;
     int rt;
 

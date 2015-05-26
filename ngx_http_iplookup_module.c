@@ -9,6 +9,10 @@
 
 #define ITEM_MAX_SIZE 128
 #define ITEM_LARGE_ERROR "large"
+#define ITEM_ICONV_ERROR "iconv"
+#define CONTENT_MAX_SIZE 1024
+#define CONTENT_LARGE_ERROR "large"
+#define DB_MAX_SIZE 256
 #define SUCCESS 1
 #define ERROR_INTRANET -1
 #define ERROR_NOTFOUND -2
@@ -52,7 +56,7 @@ static char *ngx_http_iplookup_merge_loc_conf(ngx_conf_t *cf, void *parent, void
 
 static ngx_int_t ngx_http_iplookup_handler(ngx_http_request_t *r);
 
-static int compare_bt(DB *dbp, const DBT *a, const DBT *b);
+static int compare_bt(DB *dbp, const DBT *a, const DBT *b, size_t *locp);
 
 static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n, ngx_str_t ipaddr);
 
@@ -289,7 +293,7 @@ static ngx_int_t ngx_http_iplookup_init(ngx_conf_t *cf) {
 */
 
 
-static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {
+static int compare_bt(DB *dbp, const DBT *a, const DBT *b, size_t *locp) {
     int64_t ai, bi;
     int rt;
 
@@ -310,7 +314,7 @@ static int compare_bt(DB *dbp, const DBT *a, const DBT *b) {
 
 static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *conf, int64_t n, ngx_str_t ipaddr) {
     ngx_str_t rs;
-    u_char b[128];
+    u_char b[DB_MAX_SIZE + 10];
 
     if (n < 0) {
         if (n == ERROR_INTRANET) {
@@ -324,7 +328,7 @@ static ngx_str_t search_db(ngx_http_request_t *r, ngx_http_iplookup_loc_conf_t *
     }
 
     DBT key, data;
-    u_char s[128];
+    u_char s[DB_MAX_SIZE];
     int rn;
 
     ngx_memzero(&key, sizeof(DBT));
@@ -559,7 +563,7 @@ static ngx_http_iplookup_ipinfo_t *format_ipinfo(ngx_http_request_t *r, ngx_str_
 
 
 static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *ipinfo_item) {
-    u_char b[128], p[128];
+    u_char b[ITEM_MAX_SIZE], p[ITEM_MAX_SIZE];
     int n;
     uint32_t t;
 
@@ -579,6 +583,10 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *
         t = ngx_utf8_decode(&item, len);
         len = ipinfo_item->len - (item - ipinfo_item->data);
         if (t < 0x80 || t > 0x10ffff) {
+            if (k == ITEM_MAX_SIZE) {
+                ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Warning: utf8 decode item size too large (max size %d)", ITEM_MAX_SIZE);
+                break;
+            }
             p[k] = *(item - 1);
             k++;
             continue;
@@ -588,13 +596,23 @@ static void *ipinfo_decode_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *
         //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item unicode: %s ", b);
         bn = ngx_strlen(b);
         for (j = 0; j < bn; j++) {
+            if (k == ITEM_MAX_SIZE) {
+                ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Warning: utf8 decode item size too large (max size %d)", ITEM_MAX_SIZE);
+                break;
+            }
             p[k] = ngx_tolower(b[j]);
             k++;
         }
     }
 
-    s->len = k;
-    s->data = p;
+
+    if (k == ITEM_MAX_SIZE) {
+        s->data = (u_char *) ITEM_LARGE_ERROR;
+        s->len = ngx_strlen(ITEM_LARGE_ERROR);
+    } else {
+        s->data = p;
+        s->len = k;
+    }
 
     return s;
 }
@@ -630,7 +648,7 @@ static ngx_array_t *ipinfo_decode_array(ngx_http_request_t *r, ngx_array_t *ipin
 
 static void *ipinfo_iconv_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *ipinfo_item) {
     iconv_t icp;
-    u_char p[128];
+    u_char p[ITEM_MAX_SIZE];
     char *in = (char *) ipinfo_item->data;
     char *ou = (char *) p;
     size_t inleft = ipinfo_item->len;
@@ -652,10 +670,15 @@ static void *ipinfo_iconv_item(ngx_http_request_t *r, ngx_str_t *s, ngx_str_t *i
         }
     }
     iconv_close(icp);
-    //ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "item: %V, p: %s ", ipinfo_item, p);
 
-    s->data = p;
-    s->len = n;
+    if (n > ITEM_MAX_SIZE) {
+        ngx_log_error(NGX_LOG_EMERG, r->connection->log, 0, "Warning: iconv item size %d too large (max size %d)", n, ITEM_MAX_SIZE);
+        s->data = (u_char *) ITEM_LARGE_ERROR;
+        s->len = ngx_strlen(ITEM_LARGE_ERROR);
+    } else {
+        s->data = p;
+        s->len = n;
+    }
 
     return s;
 }
